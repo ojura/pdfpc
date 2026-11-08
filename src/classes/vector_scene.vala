@@ -381,7 +381,11 @@ namespace pdfpc {
         public VectorDeck(string filename) throws GLib.Error {
             var parser = new Json.Parser();
             parser.load_from_file(filename);
-            var root = VectorJson.object_node(parser.get_root());
+            var root_node = parser.get_root();
+            if (root_node == null) {
+                throw new VectorError.INVALID("Vector timeline is empty");
+            }
+            var root = VectorJson.object_node(root_node);
             if (VectorJson.number(VectorJson.member(root, "version")) != 1) {
                 throw new VectorError.INVALID("Unsupported vector timeline version");
             }

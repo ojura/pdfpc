@@ -100,6 +100,15 @@ class RendererTests(unittest.TestCase):
         self.assertTrue(operators.intersection({b"m", b"re"}))
         self.assertIn(b"f", operators)
 
+    def test_empty_inputs_fail_without_glib_criticals(self):
+        for index, contents in enumerate(("", " \t\r\n")):
+            with self.subTest(contents=repr(contents)):
+                source = self.directory / f"empty-{index}.json"
+                source.write_text(contents, encoding="utf-8")
+                result = self.invoke("validate", source, check=False)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertNotIn("CRITICAL", result.stderr)
+
     def test_invalid_inputs_fail_without_glib_criticals(self):
         cases = []
         for mutate in (
