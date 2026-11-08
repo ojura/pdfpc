@@ -66,6 +66,9 @@ namespace pdfpc {
          */
         public int current_slide_number { get; protected set; }
 
+        public VectorPlayback? vector_animation { get; private set; default = null; }
+        public signal void vector_changed();
+
         public void switch_to_slide_number(int slide_number, bool skip_history=false) {
             if (slide_number == this.current_slide_number) {
                 // already there...
@@ -98,7 +101,11 @@ namespace pdfpc {
                 this.history_fwd.clear();
             }
 
+            bool backwards = slide_number < this.current_slide_number;
             this.current_slide_number = slide_number;
+            if (this.vector_animation != null) {
+                this.vector_animation.select_page(slide_number, backwards);
+            }
 
             // start the timer unless it's the initial positioning
             if (!this.history_bck.is_empty) {
@@ -436,6 +443,7 @@ namespace pdfpc {
                     this.timer.change.connect(on_timer_change);
 
                     this.current_slide_number = 0;
+                    this.vector_animation = new VectorPlayback(this);
 
                     this.pen_drawing = Drawings.create(metadata);
                     current_pen_drawing_tool = pen_drawing.pen;
@@ -1199,6 +1207,34 @@ namespace pdfpc {
         }
 
         protected void add_actions() {
+            add_action("vectorToggle", () => {
+                if (vector_animation != null) vector_animation.toggle();
+            }, "Play or pause the current vector derivation");
+            add_action("vectorNextCheckpoint", () => {
+                if (vector_animation != null) vector_animation.next_checkpoint();
+            }, "Skip to the next vector checkpoint");
+            add_action("vectorPreviousCheckpoint", () => {
+                if (vector_animation != null) vector_animation.previous_checkpoint();
+            }, "Skip to the previous vector checkpoint");
+            add_action("vectorRestart", () => {
+                if (vector_animation != null) vector_animation.seek(0);
+            }, "Restart the current vector derivation");
+            add_action("vectorFinish", () => {
+                if (vector_animation != null && vector_animation.binding != null)
+                    vector_animation.seek(vector_animation.binding.scene.duration);
+            }, "Show the final derivation state");
+            add_action("vectorPlayAll", () => {
+                if (vector_animation != null) vector_animation.play_all();
+            }, "Play the complete derivation continuously");
+            add_action("vectorSlower", () => {
+                if (vector_animation != null) vector_animation.change_speed(0.5);
+            }, "Halve derivation playback speed");
+            add_action("vectorFaster", () => {
+                if (vector_animation != null) vector_animation.change_speed(2);
+            }, "Double derivation playback speed");
+            add_action("vectorStatus", () => {
+                if (vector_animation != null) vector_animation.trace_state("status", true);
+            }, "Print current vector playback state");
             add_action("next", this.next_page,
                 "Go to the next slide");
             add_action("next10", this.jump10,
@@ -1610,6 +1646,9 @@ namespace pdfpc {
          * Go to the next slide
          */
         public void next_page() {
+            if (this.vector_animation != null && this.vector_animation.next()) {
+                return;
+            }
             var new_slide_number = this.current_slide_number + 1;
 
             new_slide_number = metadata.nearest_nonhidden(new_slide_number);
@@ -1670,6 +1709,9 @@ namespace pdfpc {
          * Go to the previous slide
          */
         public void previous_page() {
+            if (this.vector_animation != null && this.vector_animation.previous()) {
+                return;
+            }
             var new_slide_number = this.current_slide_number - 1;
 
             new_slide_number = metadata.nearest_nonhidden(new_slide_number, true);
@@ -1845,6 +1887,7 @@ namespace pdfpc {
         }
 
         protected void controllables_show_overview() {
+            if (this.vector_animation != null) this.vector_animation.pause();
             this.show_overview_request();
             // the show_overview request is not guaranteed to succeed,
             // hence we check
@@ -1882,6 +1925,7 @@ namespace pdfpc {
             }
 
             this.faded_to_black = !this.faded_to_black;
+            if (this.faded_to_black && this.vector_animation != null) this.vector_animation.pause();
             this.controllables_update();
         }
 
@@ -1894,6 +1938,7 @@ namespace pdfpc {
             }
 
             this.hidden = !this.hidden;
+            if (this.hidden && this.vector_animation != null) this.vector_animation.pause();
             this.controllables_update();
         }
 
@@ -1920,6 +1965,7 @@ namespace pdfpc {
             }
 
             this.frozen = !this.frozen;
+            if (this.frozen && this.vector_animation != null) this.vector_animation.pause();
             if (!this.frozen) {
                 this.faded_to_black = false;
             }
@@ -2009,6 +2055,8 @@ namespace pdfpc {
                 if (position_saved >= this.n_slides) {
                     this.current_slide_number = (int) this.n_slides - 1;
                 }
+
+                if (this.vector_animation != null) this.vector_animation.reload();
 
                 this.history_bck.clear();
                 this.history_fwd.clear();

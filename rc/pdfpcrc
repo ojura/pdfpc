@@ -13,6 +13,16 @@ bind Left               prev
 bind Up                 prev
 bind BackSpace          prev
 
+# Vector derivations: Next/Previous visit semantic checkpoints on these slides.
+bind a                  vectorToggle
+bind C+Right            vectorNextCheckpoint
+bind C+Left             vectorPreviousCheckpoint
+bind r                  vectorRestart
+bind e                  vectorFinish
+bind v                  vectorPlayAll
+bind bracketleft        vectorSlower
+bind bracketright       vectorFaster
+
 # Overlay paging
 bind S+Next             nextOverlay
 bind S+Prior            prevOverlay

@@ -54,6 +54,64 @@ namespace pdfpc {
          */
         protected Renderer.Pdf renderer;
 
+        protected weak PresentationController controller;
+        public bool vector_enabled = false;
+        private uint vector_tick_id = 0;
+        private bool vector_in_tick = false;
+        private VectorBinding? vector_displayed_binding = null;
+        private double vector_displayed_time = 0;
+
+        private bool vector_can_tick() {
+            var playback = controller.vector_animation;
+            bool frozen = controller.presentation != null &&
+                controller.presentation.main_view == this && controller.frozen;
+            return vector_enabled && !notes_area && !disabled && !frozen &&
+                get_mapped() && playback != null && playback.playing &&
+                playback.page == current_slide_number;
+        }
+
+        private void vector_refresh() {
+            if (!vector_enabled) return;
+            this.queue_draw();
+            if (vector_can_tick()) {
+                if (vector_tick_id == 0) {
+                    vector_tick_id = add_tick_callback((widget, clock) => {
+                        vector_in_tick = true;
+                        if (vector_can_tick()) {
+                            controller.vector_animation.advance(clock.get_frame_time());
+                            queue_draw();
+                        }
+                        bool keep = vector_can_tick();
+                        vector_in_tick = false;
+                        if (!keep) vector_tick_id = 0;
+                        return keep;
+                    });
+                }
+            } else if (vector_tick_id != 0 && !vector_in_tick) {
+                remove_tick_callback(vector_tick_id);
+                vector_tick_id = 0;
+            }
+        }
+
+        private void draw_vector(Cairo.Context cr, int width, int height) {
+            var playback = controller.vector_animation;
+            if (!vector_enabled || notes_area || disabled || playback == null || transition_tid != 0) return;
+            var binding = playback.binding_for(current_slide_number);
+            if (binding == null) return;
+            bool audience = controller.presentation != null && controller.presentation.main_view == this;
+            if (vector_displayed_binding != binding) {
+                vector_displayed_binding = binding;
+                vector_displayed_time = playback.page == current_slide_number ? playback.time : 0;
+            }
+            if (!(audience && controller.frozen) && playback.page == current_slide_number) {
+                vector_displayed_time = playback.time;
+            }
+            int64 started = GLib.get_monotonic_time();
+            binding.draw(cr, get_metadata(), vector_displayed_time, width, height, zoom_area);
+            playback.record_frame(audience ? "presentation" : "presenter", vector_displayed_time,
+                GLib.get_monotonic_time() - started, width, height, this.get_frame_clock());
+        }
+
         /**
          * Return the metadata object
          */
@@ -226,6 +284,10 @@ namespace pdfpc {
             bool clickable_links, PresentationController controller,
             int gdk_scale_factor, bool user_slides) {
             this.renderer = renderer;
+            this.controller = controller;
+            controller.vector_changed.connect(this.vector_refresh);
+            this.map.connect(this.vector_refresh);
+            this.unmap.connect(this.vector_refresh);
             this.gdk_scale = gdk_scale_factor;
             this.notes_area = notes_area;
             this.user_slides = user_slides;
@@ -442,6 +504,8 @@ namespace pdfpc {
         public void invalidate() {
             this.current_slide_number = -1;
             this.current_slide = null;
+            this.vector_displayed_binding = null;
+            this.vector_refresh();
         }
 
         /**
@@ -484,6 +548,7 @@ namespace pdfpc {
             cr.scale((1.0/this.gdk_scale), (1.0/this.gdk_scale));
             cr.set_source_surface(this.buffer, 0, 0);
             cr.paint();
+            draw_vector(cr, width, height);
 
             if (this.entering_slide_queued) {
                 this.entering_slide_queued = false;

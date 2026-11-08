@@ -94,6 +94,29 @@ namespace pdfpc.Window {
          */
         protected Gtk.Box status;
 
+        protected Gtk.Box vector_controls;
+        protected Gtk.Label vector_status;
+        protected Gtk.Button vector_toggle_button;
+
+        private Gtk.Button vector_button(string icon, string tooltip, string action) {
+            var button = new Gtk.Button.from_icon_name(icon, Gtk.IconSize.SMALL_TOOLBAR);
+            button.tooltip_text = tooltip;
+            button.can_focus = false;
+            button.clicked.connect(() => controller.trigger_action(action, null));
+            return button;
+        }
+
+        private void update_vector_controls() {
+            var playback = controller.vector_animation;
+            bool active = playback != null && playback.binding != null;
+            vector_controls.visible = active;
+            vector_status.label = active ? playback.status_text() : "";
+            vector_status.tooltip_text = vector_status.label;
+            vector_toggle_button.sensitive = active && playback.can_play();
+            vector_toggle_button.image = new Gtk.Image.from_icon_name(active && playback.playing ?
+                "media-playback-pause-symbolic" : "media-playback-start-symbolic", Gtk.IconSize.SMALL_TOOLBAR);
+        }
+
         /**
          * Indication that the slide is blanked (faded to black)
          */
@@ -614,7 +637,31 @@ namespace pdfpc.Window {
 
             frame = new Gtk.AspectFrame(null, 0.5f, 0.0f, page_ratio, false);
             frame.add(overlay_layout);
-            this.current_view_and_stricts.pack1(frame, true, true);
+            var current_with_controls = new Gtk.Box(Gtk.Orientation.VERTICAL, 3);
+            current_with_controls.pack_start(frame, true, true);
+            this.vector_controls = new Gtk.Box(Gtk.Orientation.HORIZONTAL, 4);
+            this.vector_controls.margin = 3;
+            this.vector_controls.pack_start(vector_button("view-refresh-symbolic",
+                "Restart derivation (r)", "vectorRestart"), false, false);
+            this.vector_controls.pack_start(vector_button("media-skip-backward-symbolic",
+                "Previous checkpoint (Ctrl+Left)", "vectorPreviousCheckpoint"), false, false);
+            this.vector_toggle_button = vector_button("media-playback-start-symbolic",
+                "Play or pause (a)", "vectorToggle");
+            this.vector_controls.pack_start(this.vector_toggle_button, false, false);
+            this.vector_controls.pack_start(vector_button("media-skip-forward-symbolic",
+                "Next checkpoint (Ctrl+Right)", "vectorNextCheckpoint"), false, false);
+            this.vector_status = new Gtk.Label("");
+            this.vector_status.ellipsize = Pango.EllipsizeMode.END;
+            this.vector_status.xalign = 0;
+            this.vector_status.hexpand = true;
+            this.vector_controls.pack_start(this.vector_status, true, true);
+            this.vector_controls.show_all();
+            this.vector_controls.no_show_all = true;
+            this.vector_controls.hide();
+            current_with_controls.pack_start(this.vector_controls, false, false);
+            this.controller.vector_changed.connect(this.update_vector_controls);
+            this.update_vector_controls();
+            this.current_view_and_stricts.pack1(current_with_controls, true, true);
             this.current_view_and_stricts.pack2(strict_views, true, true);
 
             this.slide_views.pack1(this.current_view_and_stricts, true, true);
@@ -726,6 +773,7 @@ namespace pdfpc.Window {
         }
 
         public void update() {
+            this.update_vector_controls();
             if (!this.metadata.is_ready) {
                 return;
             }

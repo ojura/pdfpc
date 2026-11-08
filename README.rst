@@ -2,6 +2,10 @@
 pdfpc
 =====
 
+This fork adds native, resolution-independent vector animation to PDF slides.
+See `Vector animations <VECTOR_ANIMATIONS.md>`_ for authoring, presenter controls,
+the timeline format and tests. The implementation is on ``vector-animations``.
+
 |ubuntubuild| |windowsbuild|
 
 .. |ubuntubuild| image:: https://github.com/pdfpc/pdfpc/actions/workflows/cmake-ubuntu.yml/badge.svg?branch=master 

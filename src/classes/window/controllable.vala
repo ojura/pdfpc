@@ -112,6 +112,7 @@ namespace pdfpc.Window {
 
             this.main_view = new View.Pdf.from_controllable_window(this,
                 false, true);
+            this.main_view.vector_enabled = true;
 
             this.pointer_drawing_surface = new Gtk.DrawingArea();
             this.pen_drawing_surface = new Gtk.DrawingArea();

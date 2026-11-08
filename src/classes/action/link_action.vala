@@ -155,6 +155,10 @@ namespace pdfpc {
 
             switch (this.action.type) {
             case Poppler.ActionType.URI:
+                if (this.action.uri.uri.has_prefix(VectorPlayback.URI_PREFIX)) {
+                    if (controller.vector_animation != null) controller.vector_animation.toggle();
+                    return true;
+                }
                 try {
                     this.launch_for_uri(this.action.uri.uri);
                 } catch (GLib.Error e) {

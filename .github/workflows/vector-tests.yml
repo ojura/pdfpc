@@ -1,0 +1,32 @@
+name: Vector playback tests
+
+on:
+  push:
+    branches: [vector-animations]
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'rc/**'
+      - 'tests/vector/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/vector-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-vector:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build valac pkg-config libgtk-3-dev libpoppler-glib-dev libgee-0.8-dev libjson-glib-dev dbus-x11 xvfb xdotool imagemagick python3-pil python3-pypdf python3-reportlab
+      - name: Build native viewer and shared renderer probe
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMOVIES=OFF -DMDVIEW=OFF -DREST=OFF
+          cmake --build build --parallel 2
+      - name: Run renderer and private-display GUI tests
+        run: ctest --test-dir build --output-on-failure

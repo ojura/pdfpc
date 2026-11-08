@@ -19,3 +19,8 @@ add_subdirectory(icons)
 add_subdirectory(man)
 add_subdirectory(css)
 add_subdirectory(rc)
+
+include(CTest)
+if(BUILD_TESTING)
+    include(cmake/VectorTests.cmake)
+endif()
