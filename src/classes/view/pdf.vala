@@ -78,8 +78,7 @@ namespace pdfpc {
                     vector_tick_id = add_tick_callback((widget, clock) => {
                         vector_in_tick = true;
                         if (vector_can_tick()) {
-                            // Control state uses elapsed real time. Display
-                            // predictions belong only to the view being drawn.
+                            // Controls and drawing use the same monotonic clock.
                             controller.vector_animation.advance(GLib.get_monotonic_time());
                             queue_draw();
                         }
@@ -100,15 +99,15 @@ namespace pdfpc {
             if (!vector_enabled || notes_area || disabled || playback == null || transition_tid != 0) return;
             var binding = playback.binding_for(current_slide_number);
             if (binding == null) return;
+            int64 sample_clock = GLib.get_monotonic_time();
             bool audience = controller.presentation != null && controller.presentation.main_view == this;
             if (vector_displayed_binding != binding) {
                 vector_displayed_binding = binding;
                 vector_displayed_time = playback.page == current_slide_number ? playback.time : 0;
             }
             if (!(audience && controller.frozen) && playback.page == current_slide_number) {
-                var clock = this.get_frame_clock();
-                vector_displayed_time = playback.time_at(clock == null ?
-                    GLib.get_monotonic_time() : clock.get_frame_time());
+                // GDK schedules draws; elapsed monotonic time determines position.
+                vector_displayed_time = playback.time_at(sample_clock);
             }
             int64 cpu_started = playback.diagnostic_cpu_time();
             int64 started = GLib.get_monotonic_time();
@@ -117,7 +116,8 @@ namespace pdfpc {
             int64 cpu_finished = playback.diagnostic_cpu_time();
             if (playback.tracing_enabled) {
                 playback.record_frame(audience ? "presentation" : "presenter", vector_displayed_time,
-                    render_us, cpu_started < 0 || cpu_finished < 0 ? -1 : cpu_finished - cpu_started,
+                    sample_clock, render_us,
+                    cpu_started < 0 || cpu_finished < 0 ? -1 : cpu_finished - cpu_started,
                     width, height, this.get_frame_clock(), cr.get_target().get_type(),
                     cr.get_group_target().get_type());
             }

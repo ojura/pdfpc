@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// One monotonic anchor serves both views; each uses its own display frame time.
+// One monotonic anchor serves both views; display frame clocks schedule redraws.
 
 namespace pdfpc {
     public class VectorBinding : Object {
@@ -479,7 +479,7 @@ namespace pdfpc {
 #endif
         }
 
-        public void record_frame(string view, double displayed_time, int64 render_us,
+        public void record_frame(string view, double displayed_time, int64 sample_clock_us, int64 render_us,
             int64 render_cpu_us, int width, int height, Gdk.FrameClock? clock,
             Cairo.SurfaceType target_type, Cairo.SurfaceType group_target_type) {
             if (trace_stream == null) {
@@ -488,6 +488,7 @@ namespace pdfpc {
             var builder = event_builder("frame");
             builder.set_member_name("view"); builder.add_string_value(view);
             builder.set_member_name("displayed_time"); builder.add_double_value(displayed_time);
+            builder.set_member_name("sample_clock_us"); builder.add_int_value(sample_clock_us);
             builder.set_member_name("render_us"); builder.add_int_value(render_us);
             builder.set_member_name("render_cpu_us"); builder.add_int_value(render_cpu_us);
             builder.set_member_name("width"); builder.add_int_value(width);

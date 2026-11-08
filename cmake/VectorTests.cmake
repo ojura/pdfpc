@@ -37,6 +37,16 @@ if(PYTHONINTERP_FOUND)
                 COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/vector/test_gui.py
                     $<TARGET_FILE:pdfpc> --output ${CMAKE_BINARY_DIR}/tests/vector/gui)
             set_tests_properties(vector-gui PROPERTIES TIMEOUT 90)
+            if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                pkg_check_modules(VECTOR_GDK REQUIRED IMPORTED_TARGET gdk-3.0)
+                add_library(vector-future-frame-clock SHARED tests/vector/future_frame_clock.c)
+                target_link_libraries(vector-future-frame-clock PRIVATE PkgConfig::VECTOR_GDK ${CMAKE_DL_LIBS})
+                add_test(NAME vector-gui-future-clock
+                    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/vector/test_gui.py
+                        $<TARGET_FILE:pdfpc> --output ${CMAKE_BINARY_DIR}/tests/vector/gui-future-clock
+                        --future-frame-clock $<TARGET_FILE:vector-future-frame-clock>)
+                set_tests_properties(vector-gui-future-clock PROPERTIES TIMEOUT 90)
+            endif()
         endif()
     else()
         message(STATUS "Vector tests need Python Pillow, pypdf and reportlab")

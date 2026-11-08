@@ -39,7 +39,8 @@ def check_frame_clocks(records):
         run = runs.setdefault(frame["playback_id"], {"anchor": anchor, "views": set()})
         assert run["anchor"] == anchor, (run, frame)
         run["views"].add(frame["view"])
-        elapsed = max(0, frame["frame_time_us"] - anchor[0]) / 1_000_000
+        assert anchor[0] <= frame["sample_clock_us"] <= frame["clock_us"], frame
+        elapsed = max(0, frame["sample_clock_us"] - anchor[0]) / 1_000_000
         expected = min(anchor[3], max(anchor[1], anchor[1] + elapsed * anchor[2]))
         error = abs(frame["displayed_time"] - expected)
         assert error <= 1e-6, {
@@ -54,6 +55,36 @@ def check_frame_clocks(records):
     return {"playing_frames": len(frames), "clock_count": len(clocks),
             "shared_runs": sum(len(run["views"]) == 2 for run in runs.values()),
             "maximum_time_error_s": maximum_error}
+
+
+def check_checkpoint_wall_time(records, playback_id, position, future_clock):
+    start = next(event for event in records if event["event"] == "state" and
+                 event.get("reason") == "play" and event["playback_id"] == playback_id)
+    stop = next(event for event in records if event["event"] == "state" and
+                event.get("reason") == "checkpoint" and event["playback_id"] == playback_id)
+    duration = (position - start["anchor_time"]) / start["speed"]
+    # advance() snaps within 1e-7 scene seconds; trace clocks resolve microseconds.
+    tolerance = 1e-7 / start["speed"] + 1e-6
+    stopped_after = (stop["clock_us"] - start["anchor_clock_us"]) / 1_000_000
+    assert stopped_after + tolerance >= duration, (start, stop)
+    views = {}
+    for view in ("presentation", "presenter"):
+        frames = [event for event in records if event["event"] == "frame" and
+                  event["view"] == view and event["playback_id"] == playback_id]
+        final = next(frame for frame in frames if abs(frame["displayed_time"] - position) < 1e-6)
+        first_final_after = (final["clock_us"] - start["anchor_clock_us"]) / 1_000_000
+        assert first_final_after + tolerance >= duration, {
+            "view": view, "first_final_after_s": first_final_after, "expected_s": duration,
+        }
+        moving = [frame for frame in frames if start["anchor_time"] < frame["displayed_time"] < position]
+        assert moving, {"view": view, "intermediate_frames": 0}
+        if future_clock:
+            # The injected GDK timestamp passes the target before actual time does.
+            assert any(frame["frame_time_us"] >= start["anchor_clock_us"] + duration*1_000_000
+                       for frame in moving), {"view": view, "future_GDK_time_missing": True}
+        views[view] = {"first_final_after_s": first_final_after, "intermediate_frames": len(moving)}
+    return {"expected_s": duration, "stopped_after_s": stopped_after,
+            "injected_future_gdk_time": future_clock, "views": views}
 
 
 def drained_endpoint(records, playback_id, position):
@@ -124,11 +155,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("pdfpc", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--future-frame-clock", type=Path,
+                        help="Test-only preload library that moves GDK frame time into the future")
     options = parser.parse_args()
     if not os.environ.get("PDFPC_VECTOR_TEST_BUS"):
         command = ["dbus-run-session", "--", "env", "PDFPC_VECTOR_TEST_BUS=1",
                    "python3", str(Path(__file__).resolve()), str(options.pdfpc.resolve()),
                    "--output", str(options.output.resolve())]
+        if options.future_frame_clock:
+            command += ["--future-frame-clock", str(options.future_frame_clock.resolve())]
         return subprocess.run(command).returncode
 
     output = options.output.resolve()
@@ -163,6 +198,13 @@ def main():
                    "XDG_CONFIG_HOME": str(output / "config"),
                    "XDG_CACHE_HOME": str(output / "cache"), "NO_AT_BRIDGE": "1",
                    "GIO_USE_VFS": "local"}
+    if options.future_frame_clock:
+        library = options.future_frame_clock.resolve()
+        assert library.is_file(), library
+        previous_path = environment.get("LD_LIBRARY_PATH", "")
+        environment["LD_LIBRARY_PATH"] = str(library.parent) + (":" + previous_path if previous_path else "")
+        previous_preload = environment.get("LD_PRELOAD", "")
+        environment["LD_PRELOAD"] = library.name + (" " + previous_preload if previous_preload else "")
     app_log = (output / "pdfpc.log").open("w")
     app = subprocess.Popen([str(options.pdfpc.resolve()), "-N", "-w", "both",
                             "-Z", "1000:750", "-P", "2", str(pdf)],
@@ -216,9 +258,16 @@ def main():
         findings.append("Both presenter and audience draw the paused initial state")
 
         action("next")
+        first_checkpoint_playback_id = state()["playback_id"]
         wait_for(lambda: check_state(position=1, playing=False), description="first checkpoint")
         assert state()["page"] == 2
+        first_records, _ = wait_for(
+            lambda: drained_endpoint(events(), first_checkpoint_playback_id, 1), timeout=2,
+            description="first checkpoint draws and timing drain")
+        first_checkpoint_report = check_checkpoint_wall_time(
+            first_records, first_checkpoint_playback_id, 1, bool(options.future_frame_clock))
         findings.append("Next stops at the first semantic checkpoint without changing PDF pages")
+        findings.append("Both views and the control stop reach the checkpoint after its actual elapsed duration")
 
         action("next")
         wait_for(lambda: check_state(playing=True), description="second segment playing")
@@ -375,7 +424,7 @@ def main():
         findings.append("Quit during motion preserves buffered draws and closes the trace with complete accounting")
 
         clock_report = check_frame_clocks(records)
-        findings.append("Both views evaluate their own frame time from the shared playback anchor")
+        findings.append("Both views evaluate monotonic draw samples from the shared playback anchor")
         frames = [e for e in records if e["event"] == "frame" and e["view"] == "presentation" and e["playing"]]
         clock_intervals = [(b["clock_us"] - a["clock_us"])/1000 for a, b in zip(frames, frames[1:])
                            if 0 < b["displayed_time"] - a["displayed_time"] < 0.05 and
@@ -383,6 +432,7 @@ def main():
         render_us = sorted(e["render_us"] for e in frames)
         report = {"checks": findings, "animated_audience_frames": len(frames),
                   "per_view_clocks": clock_report, "endpoint_timing": endpoint_report,
+                  "first_checkpoint_timing": first_checkpoint_report,
                   "shutdown_timing": shutdown_report,
                   "audience_render_p95_ms": render_us[int(len(render_us)*0.95)]/1000,
                   "median_frame_interval_ms": sorted(clock_intervals)[len(clock_intervals)//2],

@@ -2,7 +2,7 @@
 
 This fork extends pdfpc 4.7.0 with vector timelines drawn by Cairo inside the
 existing slide view. Presenter and audience share a monotonic playback anchor;
-each window evaluates it at its own GTK frame time. A timeline contains path
+each window samples it when GTK schedules a draw. A timeline contains path
 geometry, colors, opacity and semantic checkpoints.
 
 ## Build and run
@@ -65,15 +65,17 @@ The actions are configurable through normal pdfpc bindings:
 ## Playback timing
 
 A common anchor records the scene time, monotonic clock time, speed and target.
-Each window evaluates that anchor using its own GTK frame time:
+Each window takes one monotonic sample when drawing and evaluates that anchor:
 
 ```text
-elapsed_s = max(0, frame_time_us - anchor_clock_us) / 1e6
+elapsed_s = max(0, sample_clock_us - anchor_clock_us) / 1e6
 displayed_time = min(target, anchor_time + elapsed_s * speed)
 ```
 
-Control state advances from current monotonic time. Drawing evaluates the
-window's frame time from the same anchor. Starting or resuming playback, and
+Control state advances from the same monotonic time base. GTK frame clocks
+schedule redraws and provide presentation feedback. Their raw timestamps remain
+in diagnostics, while scene position follows elapsed real time even when a
+backend's frame-time prediction drifts. Starting or resuming playback, and
 changing speed, establishes a new anchor. A paused window holds its scene state.
 
 Background PDF caching for slide, preview and notes views waits while vector
@@ -134,6 +136,8 @@ interpolation, held geometry, alpha, glyph holes, scaling, vector PDF output,
 malformed data, both native windows, navigation, pause/resume, checkpoint
 skipping, freeze/blank/hide, reload, resizing, per-view clock evaluation,
 final-frame accounting, buffered shutdown traces and real input events.
+On Linux, a second GUI run injects a GDK timestamp eight seconds in the future
+and verifies intermediate states and actual checkpoint duration in both views.
 
 ## Diagnostics and trace interpretation
 
@@ -155,7 +159,8 @@ additional draws.
 | Record or field | Interpretation |
 | --- | --- |
 | `state` | Live control change, including the current anchor, target and checkpoint |
-| `frame` | A draw from one view, with `frame_clock_id`, `frame_counter`, `frame_time_us`, `displayed_time` and drawing cost |
+| `frame` | A draw from one view, with `frame_clock_id`, `frame_counter`, `sample_clock_us`, raw `frame_time_us`, `displayed_time` and drawing cost |
+| `sample_clock_us` | The monotonic timestamp used to evaluate scene position for this draw |
 | `timing` | Delayed `completed_timings` for previously recorded draws on a particular clock |
 | `work` | Background PDF caching activity, identified by `pdf-prerender-deferred` or `pdf-prerender` in its `work` field |
 | `display_backend` | Runtime GDK display type, such as `GdkX11Display` or `GdkWaylandDisplay`, included in trace records |
