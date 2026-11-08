@@ -24,6 +24,15 @@ The implementation draws the paths at the current output size, including when
 the window is resized or scaled for a high-DPI display. It uses no video file,
 browser surface or additional animation window.
 
+### Relocatable packages
+
+Packages such as AppImages can set `PDFPC_DATA_DIR` to the directory containing
+`css/`, `icons/` and the relative REST static resources, and `PDFPC_CONFIG_DIR`
+to the directory containing `pdfpcrc`. These overrides also apply with
+`--no-install`. Unset or empty variables retain the existing installation or
+source-tree resource paths. User CSS and user configuration keep their normal
+XDG locations.
+
 ## Presenter controls
 
 An animated slide starts paused. Normal Next plays to the next semantic
