@@ -78,7 +78,9 @@ namespace pdfpc {
                     vector_tick_id = add_tick_callback((widget, clock) => {
                         vector_in_tick = true;
                         if (vector_can_tick()) {
-                            controller.vector_animation.advance(clock.get_frame_time());
+                            // Control state uses elapsed real time. Display
+                            // predictions belong only to the view being drawn.
+                            controller.vector_animation.advance(GLib.get_monotonic_time());
                             queue_draw();
                         }
                         bool keep = vector_can_tick();
@@ -104,12 +106,21 @@ namespace pdfpc {
                 vector_displayed_time = playback.page == current_slide_number ? playback.time : 0;
             }
             if (!(audience && controller.frozen) && playback.page == current_slide_number) {
-                vector_displayed_time = playback.time;
+                var clock = this.get_frame_clock();
+                vector_displayed_time = playback.time_at(clock == null ?
+                    GLib.get_monotonic_time() : clock.get_frame_time());
             }
+            int64 cpu_started = playback.diagnostic_cpu_time();
             int64 started = GLib.get_monotonic_time();
             binding.draw(cr, get_metadata(), vector_displayed_time, width, height, zoom_area);
-            playback.record_frame(audience ? "presentation" : "presenter", vector_displayed_time,
-                GLib.get_monotonic_time() - started, width, height, this.get_frame_clock());
+            int64 render_us = GLib.get_monotonic_time() - started;
+            int64 cpu_finished = playback.diagnostic_cpu_time();
+            if (playback.tracing_enabled) {
+                playback.record_frame(audience ? "presentation" : "presenter", vector_displayed_time,
+                    render_us, cpu_started < 0 || cpu_finished < 0 ? -1 : cpu_finished - cpu_started,
+                    width, height, this.get_frame_clock(), cr.get_target().get_type(),
+                    cr.get_group_target().get_type());
+            }
         }
 
         /**
@@ -178,6 +189,9 @@ namespace pdfpc {
          * ID of timeout used to delay pre-rendering
          */
         protected uint prerender_tid = 0;
+        private int prerender_page = -1;
+        private int prerender_last_page = -1;
+        private bool prerender_deferred = false;
 
         /**
          * Transition timer
@@ -195,17 +209,12 @@ namespace pdfpc {
          * Launch pre-rendering
          */
         protected virtual bool prerender() {
-            // indicate we're running, too late to cancel even if desired
             this.prerender_tid = 0;
 
             // things might have changed during prerender_delay...
             if (this.disabled) {
                 return GLib.Source.REMOVE;
             }
-
-            // The pointer is needed to keep track of the slide progress inside
-            // the pre-render loop
-            int* p_slide = null;
 
             var metadata = this.get_metadata();
 
@@ -238,42 +247,67 @@ namespace pdfpc {
                 }
             }
 
-            int width, height;
-            this.get_pixel_dimensions(out width, out height);
-
-            GLib.Idle.add(() => {
-                if (p_slide == null) {
-                    p_slide = malloc(sizeof(int));
-                    *p_slide = first_page;
-                }
-
-                if (!this.user_slides || metadata.is_user_slide(*p_slide)) {
-                    // We do not care about the result, as the
-                    // rendering function stores the rendered
-                    // pixmap in the cache if it is enabled. This
-                    // is exactly what we want.
-                    try {
-                        this.renderer.render(*p_slide, this.notes_area, width, height,
-                            true);
-                    } catch(Renderer.RenderError e) {
-                        GLib.printerr("Could pre-render page '%i': %s\n",
-                            *p_slide, e.message);
-                    }
-                }
-
-                // Increment one slide for each call and stop the loop if we
-                // have reached the last slide
-                *p_slide = *p_slide + 1;
-                *p_slide = metadata.nearest_nonhidden(*p_slide);
-                if (*p_slide > last_slide) {
-                    free(p_slide);
-                    return GLib.Source.REMOVE;
-                } else {
-                    return GLib.Source.CONTINUE;
-                }
-            });
+            this.prerender_page = first_page;
+            this.prerender_last_page = last_slide;
+            this.prerender_deferred = false;
+            this.prerender_tid = GLib.Idle.add(this.prerender_step);
 
             // don't repeat...
+            return GLib.Source.REMOVE;
+        }
+
+        private void cancel_prerender() {
+            if (this.prerender_tid != 0) {
+                GLib.Source.remove(this.prerender_tid);
+                this.prerender_tid = 0;
+            }
+            this.prerender_page = -1;
+        }
+
+        private bool prerender_step() {
+            this.prerender_tid = 0;
+            if (this.disabled || this.prerender_page < 0 ||
+                this.prerender_page > this.prerender_last_page) return GLib.Source.REMOVE;
+
+            var playback = controller.vector_animation;
+            bool trace = playback != null && playback.tracing_enabled;
+            bool audience = controller.presentation != null && controller.presentation.main_view == this;
+            // Preview and notes views share the same GTK thread. Defer their
+            // PDF rendering too, retaining the next page for the teaching pause.
+            if (playback != null && playback.playing) {
+                if (trace && !this.prerender_deferred) {
+                    playback.record_work("pdf-prerender-deferred", audience ? "presentation" : "presenter",
+                        this.prerender_page, GLib.get_monotonic_time(), 0, -1);
+                }
+                this.prerender_deferred = true;
+                this.prerender_tid = GLib.Timeout.add(250, this.prerender_step);
+                return GLib.Source.REMOVE;
+            }
+
+            var metadata = this.get_metadata();
+            if (!this.user_slides || metadata.is_user_slide(this.prerender_page)) {
+                int width, height;
+                this.get_pixel_dimensions(out width, out height);
+                int64 started = trace ? GLib.get_monotonic_time() : 0;
+                int64 cpu_started = trace ? playback.diagnostic_cpu_time() : -1;
+                try {
+                    this.renderer.render(this.prerender_page, this.notes_area,
+                        width, height, true);
+                } catch(Renderer.RenderError e) {
+                    GLib.printerr("Could pre-render page '%i': %s\n", this.prerender_page, e.message);
+                }
+                if (trace) {
+                    int64 wall_us = GLib.get_monotonic_time() - started;
+                    int64 cpu_finished = playback.diagnostic_cpu_time();
+                    playback.record_work("pdf-prerender", audience ? "presentation" : "presenter",
+                        this.prerender_page, started, wall_us,
+                        cpu_started < 0 || cpu_finished < 0 ? -1 : cpu_finished - cpu_started);
+                }
+            }
+            this.prerender_page = metadata.nearest_nonhidden(this.prerender_page + 1);
+            if (this.prerender_page <= this.prerender_last_page) {
+                this.prerender_tid = GLib.Idle.add(this.prerender_step);
+            }
             return GLib.Source.REMOVE;
         }
 
@@ -288,6 +322,7 @@ namespace pdfpc {
             controller.vector_changed.connect(this.vector_refresh);
             this.map.connect(this.vector_refresh);
             this.unmap.connect(this.vector_refresh);
+            this.destroy.connect(this.cancel_prerender);
             this.gdk_scale = gdk_scale_factor;
             this.notes_area = notes_area;
             this.user_slides = user_slides;
@@ -428,9 +463,7 @@ namespace pdfpc {
 
                         if (Options.prerender_slides != 0) {
                             // cancel any pending pre-rendering
-                            if (this.prerender_tid != 0) {
-                                GLib.Source.remove(this.prerender_tid);
-                            }
+                            this.cancel_prerender();
 
                             // wait before starting pre-rendering
                             this.prerender_tid =
@@ -502,6 +535,7 @@ namespace pdfpc {
          * Invalidate the current slide, forcing redrawing on update
          */
         public void invalidate() {
+            this.cancel_prerender();
             this.current_slide_number = -1;
             this.current_slide = null;
             this.vector_displayed_binding = null;

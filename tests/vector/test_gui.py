@@ -24,6 +24,102 @@ def wait_for(check, timeout=10, description="condition"):
     raise AssertionError(f"Timed out waiting for {description}")
 
 
+def check_frame_clocks(records):
+    frames = [event for event in records if event["event"] == "frame" and event["playing"]]
+    assert {frame["view"] for frame in frames} == {"presentation", "presenter"}
+    clocks = {}
+    runs = {}
+    maximum_error = 0
+    for frame in frames:
+        clock_id = frame["frame_clock_id"]
+        assert clock_id > 0 and frame["frame_counter"] >= 0, frame
+        assert clocks.setdefault(clock_id, frame["view"]) == frame["view"], frame
+        anchor = (frame["anchor_clock_us"], frame["anchor_time"], frame["speed"], frame["target"])
+        assert frame["playback_id"] == anchor[0] and anchor[0] > 0, frame
+        run = runs.setdefault(frame["playback_id"], {"anchor": anchor, "views": set()})
+        assert run["anchor"] == anchor, (run, frame)
+        run["views"].add(frame["view"])
+        elapsed = max(0, frame["frame_time_us"] - anchor[0]) / 1_000_000
+        expected = min(anchor[3], max(anchor[1], anchor[1] + elapsed * anchor[2]))
+        error = abs(frame["displayed_time"] - expected)
+        assert error <= 1e-6, {
+            "view": frame["view"], "clock": clock_id, "playback": frame["playback_id"],
+            "displayed": frame["displayed_time"], "expected": expected, "error": error,
+        }
+        assert frame["render_us"] >= 0 and frame["render_cpu_us"] >= -1, frame
+        maximum_error = max(maximum_error, error)
+    assert len(clocks) >= 2, clocks
+    assert any(run["views"] == {"presentation", "presenter"} for run in runs.values()), runs
+    assert {0.5, 1}.issubset({frame["speed"] for frame in frames})
+    return {"playing_frames": len(frames), "clock_count": len(clocks),
+            "shared_runs": sum(len(run["views"]) == 2 for run in runs.values()),
+            "maximum_time_error_s": maximum_error}
+
+
+def drained_endpoint(records, playback_id, position):
+    frames = [event for event in records if event["event"] == "frame"]
+    endpoint = [frame for frame in frames if frame["playback_id"] == playback_id and
+                not frame["playing"] and abs(frame["displayed_time"] - position) < 1e-6]
+    if {frame["view"] for frame in endpoint} != {"presentation", "presenter"}:
+        return None
+    latest_draw = max(frame["clock_us"] for frame in frames)
+    for index in range(len(records) - 1, -1, -1):
+        event = records[index]
+        if event["event"] == "trace-drained" and event["playback_id"] == playback_id and \
+                not event["playing"] and abs(event["time"] - position) < 1e-6 and \
+                event["last_frame_recorded_us"] >= latest_draw:
+            return records[:index + 1], endpoint
+    return None
+
+
+def check_timing_accounting(records, endpoint):
+    # GTK frame counters are local to their clock. A delayed timing event may
+    # carry a newer playback_id, so never use its playback id to join feedback.
+    draws = {}
+    completed = {}
+    for event in records:
+        if event["event"] == "frame":
+            key = (event["frame_clock_id"], event["frame_counter"])
+            draws.setdefault(key, event)
+        for timing in event.get("completed_timings", []):
+            key = (event["frame_clock_id"], timing["counter"])
+            assert key in draws, {"unrecorded_completion": key, "event": event}
+            assert key not in completed, {"duplicate_completion": key, "event": event}
+            assert draws[key]["view"] == event["view"], (draws[key], event)
+            assert timing["presentation_time_us"] >= 0, timing
+            assert not timing["expired"] or timing["presentation_time_us"] == 0, timing
+            completed[key] = timing
+    drain = records[-1]
+    assert drain["event"] in {"trace-drained", "trace-closed"}, drain
+    pending = set(draws) - set(completed)
+    assert drain["pending_frames"] == len(pending), (drain, sorted(pending))
+    assert drain["clock_us"] >= drain["last_frame_recorded_us"] >= \
+        max(frame["clock_us"] for frame in draws.values()), drain
+    if drain["event"] == "trace-drained":
+        stop = max(event["clock_us"] for event in records if event["event"] == "state" and
+                   event["playback_id"] == drain["playback_id"] and not event["playing"])
+        assert any(event["event"] == "timing" and event["clock_us"] >= stop for event in records)
+
+    def disposition(key):
+        timing = completed.get(key)
+        if timing is None:
+            return "pending"
+        if timing["expired"]:
+            return "expired"
+        return "presented" if timing["presentation_time_us"] else "unavailable"
+
+    endpoint_status = {}
+    for frame in endpoint:
+        key = (frame["frame_clock_id"], frame["frame_counter"])
+        assert key in draws, frame
+        endpoint_status[frame["view"]] = disposition(key)
+    counts = {kind: 0 for kind in ("presented", "unavailable", "expired", "pending")}
+    for key in draws:
+        counts[disposition(key)] += 1
+    return {"recorded_frame_keys": len(draws), "feedback": counts,
+            "final_draws": endpoint_status}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("pdfpc", type=Path)
@@ -85,10 +181,10 @@ def main():
     def state():
         return next((event for event in reversed(events()) if event["event"] == "state"), None)
 
-    def action(name):
+    def action(name, expect_reply=True):
         subprocess.run(["dbus-send", "--session", "--print-reply", "--dest=io.github.pdfpc",
                         "/io/github/pdfpc", "io.github.pdfpc.TriggerAction", f"string:{name}"],
-                       env=environment, check=True, capture_output=True, text=True)
+                       env=environment, check=expect_reply, capture_output=True, text=True)
 
     def check_state(page=None, position=None, playing=None):
         current = state()
@@ -165,11 +261,17 @@ def main():
         assert state()["target"] == 3 and not state()["playing"], state()
         action("vectorToggle")
         assert state()["target"] == 3 and state()["playing"], state()
+        continuous_playback_id = state()["playback_id"]
         wait_for(lambda: any(e.get("reason") == "checkpoint-passed" and
                             e.get("checkpoint") == 1 and e.get("playing")
                             for e in events()), description="continuous checkpoint status")
         wait_for(lambda: check_state(position=3, playing=False), description="resumed continuous playback")
         findings.append("Play/pause preserves continuous playback and updates crossed-checkpoint status")
+        drained, endpoint = wait_for(
+            lambda: drained_endpoint(events(), continuous_playback_id, 3), timeout=2,
+            description="both final draws and post-stop timing drain")
+        endpoint_report = check_timing_accounting(drained, endpoint)
+        findings.append("Final draws and delayed timing feedback are accounted for by clock and frame counter")
         action("vectorRestart")
 
         action("vectorPlayAll")
@@ -205,8 +307,18 @@ def main():
         action("vectorRestart")
         action("vectorSlower")
         action("vectorPlayAll")
+        prerender_playback_id = state()["playback_id"]
         wait_for(lambda: check_state(position=3, playing=False), timeout=8, description="half-speed continuous playback")
         findings.append("Continuous playback reaches its exact final state at half speed")
+        work = [event for event in events() if event["event"] == "work"]
+        assert any(event["work"] == "pdf-prerender-deferred" and event["playing"] and
+                   event["playback_id"] == prerender_playback_id for event in work), work
+        assert not any(event["work"] == "pdf-prerender" and event["playing"] for event in work), work
+        wait_for(lambda: any(event["event"] == "work" and event["work"] == "pdf-prerender" and
+                             not event["playing"] and event["playback_id"] == prerender_playback_id
+                             for event in events()), timeout=1.5,
+                 description="deferred PDF prerender resumes after the checkpoint")
+        findings.append("PDF prerendering defers during motion and resumes after the paused checkpoint")
 
         action("next")
         wait_for(lambda: check_state(page=3), description="next leaves completed derivation")
@@ -239,12 +351,39 @@ def main():
         subprocess.run(["import", "-window", audience_id, str(output / "presentation.png")],
                        env=environment, check=True)
 
-        frames = [e for e in events() if e["event"] == "frame" and e["view"] == "presentation" and e["playing"]]
+        action("vectorPlayAll")
+        shutdown_playback_id = state()["playback_id"]
+        time.sleep(0.1)
+        visible_before_quit = sum(event["event"] == "frame" and
+                                  event["playback_id"] == shutdown_playback_id for event in events())
+        # GTK may exit before D-Bus delivers the quit reply; verify the actual
+        # clean exit and terminal trace record instead of requiring that reply.
+        action("quit", expect_reply=False)
+        assert app.wait(timeout=5) == 0, app.returncode
+        records = events()
+        closed = records[-1]
+        assert closed["event"] == "trace-closed" and closed["playing"], closed
+        assert closed["playback_id"] == shutdown_playback_id, closed
+        assert sum(event["event"] == "trace-closed" for event in records) == 1
+        shutdown_frames = [event for event in records if event["event"] == "frame" and
+                           event["playback_id"] == shutdown_playback_id]
+        assert {frame["view"] for frame in shutdown_frames} == {"presentation", "presenter"}
+        assert len(shutdown_frames) > visible_before_quit, (len(shutdown_frames), visible_before_quit)
+        shutdown_report = check_timing_accounting(records, shutdown_frames)
+        shutdown_report["new_run_frames"] = len(shutdown_frames)
+        shutdown_report["buffered_frames_preserved"] = len(shutdown_frames) - visible_before_quit
+        findings.append("Quit during motion preserves buffered draws and closes the trace with complete accounting")
+
+        clock_report = check_frame_clocks(records)
+        findings.append("Both views evaluate their own frame time from the shared playback anchor")
+        frames = [e for e in records if e["event"] == "frame" and e["view"] == "presentation" and e["playing"]]
         clock_intervals = [(b["clock_us"] - a["clock_us"])/1000 for a, b in zip(frames, frames[1:])
                            if 0 < b["displayed_time"] - a["displayed_time"] < 0.05 and
                            b["clock_us"] - a["clock_us"] < 100000]
         render_us = sorted(e["render_us"] for e in frames)
         report = {"checks": findings, "animated_audience_frames": len(frames),
+                  "per_view_clocks": clock_report, "endpoint_timing": endpoint_report,
+                  "shutdown_timing": shutdown_report,
                   "audience_render_p95_ms": render_us[int(len(render_us)*0.95)]/1000,
                   "median_frame_interval_ms": sorted(clock_intervals)[len(clock_intervals)//2],
                   "frame_intervals_under_20ms": sum(x < 20 for x in clock_intervals),

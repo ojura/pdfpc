@@ -1,9 +1,9 @@
 # Native vector animations
 
 This fork extends pdfpc 4.7.0 with vector timelines drawn by Cairo inside the
-existing slide view. The presenter and audience windows share a monotonic
-playback clock. A timeline contains path geometry, colors, opacity and semantic
-checkpoints; GTK schedules drawing at the display's frame rate.
+existing slide view. Presenter and audience share a monotonic playback anchor;
+each window evaluates it at its own GTK frame time. A timeline contains path
+geometry, colors, opacity and semantic checkpoints.
 
 ## Build and run
 
@@ -52,6 +52,24 @@ and time stay fixed while the presenter can navigate normally.
 The actions are configurable through normal pdfpc bindings:
 `vectorToggle`, `vectorNextCheckpoint`, `vectorPreviousCheckpoint`,
 `vectorRestart`, `vectorFinish`, `vectorPlayAll`, `vectorSlower`, `vectorFaster`.
+
+## Playback timing
+
+A common anchor records the scene time, monotonic clock time, speed and target.
+Each window evaluates that anchor using its own GTK frame time:
+
+```text
+elapsed_s = max(0, frame_time_us - anchor_clock_us) / 1e6
+displayed_time = min(target, anchor_time + elapsed_s * speed)
+```
+
+Control state advances from current monotonic time. Drawing evaluates the
+window's frame time from the same anchor. Starting or resuming playback, and
+changing speed, establishes a new anchor. A paused window holds its scene state.
+
+Background PDF caching for slide, preview and notes views waits while vector
+playback is active. It retains the next page to cache, checks again after
+250 ms, and resumes during a manual pause or a pause at a checkpoint.
 
 ## Timeline format, version 1
 
@@ -105,13 +123,59 @@ build/bin/vector-probe benchmark lecture.vector.json scene-id 1920 1040 1000
 The probe exports PDF, SVG or PNG according to the output suffix. Tests cover
 interpolation, held geometry, alpha, glyph holes, scaling, vector PDF output,
 malformed data, both native windows, navigation, pause/resume, checkpoint
-skipping, freeze/blank/hide, reload, resizing and real input events.
+skipping, freeze/blank/hide, reload, resizing, per-view clock evaluation,
+final-frame accounting, buffered shutdown traces and real input events.
 
-For diagnostics, `PDFPC_VECTOR_MANIFEST` overrides sidecar discovery and
-`PDFPC_VECTOR_SPEED` sets the initial speed. Setting `PDFPC_VECTOR_TRACE` writes
-JSONL state changes and per-view drawing timings, including completed GTK
-presentation timestamps when available. `vectorStatus` prints the current
-playback state through the normal action interface. Tracing is off by default.
+## Diagnostics and trace interpretation
 
-The benchmark reports drawing cost. Display pacing must be measured from actual
-presentation timestamps with the audience and presenter windows active.
+`PDFPC_VECTOR_MANIFEST` overrides sidecar discovery; `PDFPC_VECTOR_SPEED` sets
+the initial speed. `vectorStatus` prints playback state through the normal
+action interface. Enable JSONL tracing with a fresh output filename for each
+viewer launch:
+
+```sh
+PDFPC_VECTOR_TRACE="$PWD/lecture-trace.jsonl" \
+    build/bin/pdfpc --no-install lecture.pdf
+```
+
+Tracing is off by default. During motion, draw records are buffered; state
+changes, paused draws and normal quit flush them. A short stopped-state
+collector retrieves delayed GTK completion feedback without requesting
+additional draws.
+
+| Record or field | Interpretation |
+| --- | --- |
+| `state` | Live control change, including the current anchor, target and checkpoint |
+| `frame` | A draw from one view, with `frame_clock_id`, `frame_counter`, `frame_time_us`, `displayed_time` and drawing cost |
+| `timing` | Delayed `completed_timings` for previously recorded draws on a particular clock |
+| `work` | Background PDF caching activity, identified by `pdf-prerender-deferred` or `pdf-prerender` in its `work` field |
+| `display_backend` | Runtime GDK display type, such as `GdkX11Display` or `GdkWaylandDisplay`, included in trace records |
+| `trace-drained` | Stopped-state collection finished or reached its 500 ms budget; `pending_frames` counts feedback still outstanding across all clocks |
+| `trace-closed` | Final record on normal quit, including a quit during motion; the buffered tail has been flushed |
+| `last_frame_recorded_us` | Monotonic recording watermark in drain/close records; compare it with draw records' `clock_us` to include the final draws |
+| `render_us` / `render_cpu_us` | Wall time / drawing-thread CPU time in microseconds; CPU time is `-1` when the optional platform clock is unavailable |
+
+Work records include `view`, one-based `work_page`, monotonic `started_us`,
+`wall_us` and `cpu_us`. A deferred operation records zero wall time and
+`cpu_us: -1`; executed work records its measured cost, with CPU time `-1`
+when that measurement is unavailable.
+
+`frame_clock_id` is stable within one viewer instance. Match each completed
+timing to its originating draw using `(frame_clock_id, counter)`. Select a run
+using the draw's `scene`, `view` and `playback_id`; the latter identifies its
+monotonic anchor. A timing receipt can arrive after a new run starts, so its
+current playback metadata can differ from the originating draw.
+
+A completed timing with `presentation_time_us == 0` has no presentation
+timestamp. `expired: true` marks feedback that left GTK's history. Count those
+cases and feedback still missing separately from positive presentation
+timestamps. Equal positive timestamps can represent coalesced draws at one
+display refresh.
+
+The probe benchmark reports drawing cost. Use presentation timestamps for
+observed delivery intervals, retaining the coverage count for each view and
+run. Intervals spanning draws with unavailable, expired or missing timestamps
+are unknown-feedback spans; report them separately from verified delivery
+gaps. Report the positive-timestamp sample rate separately when feedback is
+partial. Wall time includes waiting and scheduling; thread CPU time measures
+CPU work on the drawing thread.

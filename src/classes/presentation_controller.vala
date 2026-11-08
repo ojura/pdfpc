@@ -1190,6 +1190,7 @@ namespace pdfpc {
                     // pass
                 }
             }
+            if (this.vector_animation != null) this.vector_animation.close_trace();
             Gtk.main_quit();
         }
 

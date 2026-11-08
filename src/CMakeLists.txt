@@ -148,6 +148,14 @@ if (CC_HAS_IMPLICIT_FUNCTION_DECLARATION)
     add_definitions("-Wno-implicit-function-declaration")
 endif()
 
+# CPU timing is optional diagnostic data, never a playback requirement.
+include(CheckSymbolExists)
+check_symbol_exists(clock_gettime "time.h" HAVE_CLOCK_GETTIME)
+check_symbol_exists(CLOCK_THREAD_CPUTIME_ID "time.h" HAVE_CLOCK_THREAD_CPUTIME_ID)
+if (HAVE_CLOCK_GETTIME AND HAVE_CLOCK_THREAD_CPUTIME_ID)
+    set(EXTRA_VALA_OPTIONS ${EXTRA_VALA_OPTIONS} -D THREAD_CPU_CLOCK)
+endif()
+
 vala_precompile(VALA_C
     ${VALA_SRC}
 PACKAGES
