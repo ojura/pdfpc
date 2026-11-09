@@ -3,11 +3,15 @@
 
 import argparse
 import json
+import math
 import os
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+sys.dont_write_bytecode = True
 
 from reportlab.pdfgen import canvas
 
@@ -22,6 +26,84 @@ def wait_for(check, timeout=10, description="condition"):
             return result
         time.sleep(0.025)
     raise AssertionError(f"Timed out waiting for {description}")
+
+
+def read_complete_trace(filename):
+    """Reject malformed, duplicate or non-finite JSON after the writer has closed."""
+    def unique_object(pairs):
+        result = {}
+        for name, value in pairs:
+            assert name not in result, {"duplicate_json_member": name}
+            result[name] = value
+        return result
+
+    def reject_constant(value):
+        raise AssertionError({"non_json_numeric_constant": value})
+
+    text = filename.read_text(encoding="utf-8")
+    assert text.endswith("\n"), "Closed trace has an incomplete final line"
+    return [json.loads(line, object_pairs_hook=unique_object, parse_constant=reject_constant)
+            for line in text[:-1].split("\n")]
+
+
+def check_trace_schema(records):
+    common = {"event", "clock_us", "page", "scene", "time", "playing", "playback_id",
+              "anchor_clock_us", "anchor_time", "speed", "target", "display_backend"}
+    extras = {
+        "state": {"reason", "checkpoint"},
+        "frame": {"view", "displayed_time", "sample_clock_us", "render_us", "render_cpu_us",
+                  "width", "height", "cairo_target_type", "cairo_group_target_type",
+                  "frame_counter", "frame_time_us", "refresh_interval_us", "frame_clock_id",
+                  "completed_timings", "feedback_collected_us"},
+        "timing": {"view", "frame_clock_id", "completed_timings", "feedback_collected_us"},
+        "work": {"work", "view", "work_page", "started_us", "wall_us", "cpu_us"},
+        "trace-drained": {"pending_frames", "last_frame_recorded_us"},
+        "trace-closed": {"pending_frames", "last_frame_recorded_us"},
+    }
+    integers = {"clock_us", "page", "playback_id", "anchor_clock_us", "checkpoint",
+                "sample_clock_us", "render_us", "render_cpu_us", "width", "height",
+                "cairo_target_type", "cairo_group_target_type", "frame_counter", "frame_time_us",
+                "refresh_interval_us", "frame_clock_id", "feedback_collected_us", "work_page",
+                "started_us", "wall_us", "cpu_us", "pending_frames", "last_frame_recorded_us"}
+    numbers = {"time", "anchor_time", "speed", "target", "displayed_time"}
+    strings = {"event", "display_backend", "reason", "view", "work"}
+    counts = {}
+    presented = 0
+    for record in records:
+        kind = record.get("event")
+        assert kind in extras, record
+        expected = common | extras[kind]
+        assert record.keys() == expected, {
+            "event": kind, "missing": sorted(expected - record.keys()),
+            "unexpected": sorted(record.keys() - expected),
+        }
+        counts[kind] = counts.get(kind, 0) + 1
+        for name, value in record.items():
+            if name in integers:
+                assert type(value) is int, (name, value)
+            elif name in numbers:
+                assert type(value) in (int, float) and math.isfinite(value), (name, value)
+            elif name in strings:
+                assert type(value) is str, (name, value)
+        assert type(record["playing"]) is bool, record
+        assert record["scene"] is None or type(record["scene"]) is str, record
+        assert record["clock_us"] > 0 and record["speed"] > 0, record
+        if "completed_timings" in record:
+            assert type(record["completed_timings"]) is list, record
+            assert record["feedback_collected_us"] >= record["clock_us"], record
+            for timing in record["completed_timings"]:
+                assert timing.keys() == {"counter", "presentation_time_us", "expired"}, timing
+                assert type(timing["counter"]) is int and timing["counter"] >= 0, timing
+                assert type(timing["presentation_time_us"]) is int, timing
+                assert type(timing["expired"]) is bool, timing
+                assert 0 <= timing["presentation_time_us"] <= record["feedback_collected_us"], {
+                    "event": record, "completion_after_receipt": timing,
+                }
+                assert not timing["expired"] or timing["presentation_time_us"] == 0, timing
+                presented += timing["presentation_time_us"] > 0
+    assert counts.keys() == extras.keys(), counts
+    return {"records": len(records), "events": counts,
+            "positive_presentations_before_feedback_receipt": presented}
 
 
 def check_frame_clocks(records):
@@ -118,6 +200,7 @@ def check_timing_accounting(records, endpoint):
             assert key not in completed, {"duplicate_completion": key, "event": event}
             assert draws[key]["view"] == event["view"], (draws[key], event)
             assert timing["presentation_time_us"] >= 0, timing
+            assert event["feedback_collected_us"] >= timing["presentation_time_us"], (event, timing)
             assert not timing["expired"] or timing["presentation_time_us"] == 0, timing
             completed[key] = timing
     drain = records[-1]
@@ -423,7 +506,9 @@ def main():
         # clean exit and terminal trace record instead of requiring that reply.
         action("quit", expect_reply=False)
         assert app.wait(timeout=5) == 0, app.returncode
-        records = events()
+        records = read_complete_trace(trace)
+        schema_report = check_trace_schema(records)
+        findings.append("Every final trace line preserves the JSON schema and records completed feedback receipt")
         closed = records[-1]
         assert closed["event"] == "trace-closed" and closed["playing"], closed
         assert closed["playback_id"] == shutdown_playback_id, closed
@@ -445,6 +530,7 @@ def main():
                            b["clock_us"] - a["clock_us"] < 100000]
         render_us = sorted(e["render_us"] for e in frames)
         report = {"checks": findings, "animated_audience_frames": len(frames),
+                  "trace_schema": schema_report,
                   "per_view_clocks": clock_report, "endpoint_timing": endpoint_report,
                   "first_checkpoint_timing": first_checkpoint_report,
                   "shutdown_timing": shutdown_report,

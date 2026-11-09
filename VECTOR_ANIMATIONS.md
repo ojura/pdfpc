@@ -144,6 +144,9 @@ skipping, freeze/blank/hide, reload, resizing, per-view clock evaluation,
 final-frame accounting, buffered shutdown traces and real input events.
 On Linux, a second GUI run injects a GDK timestamp eight seconds in the future
 and verifies intermediate states and actual checkpoint duration in both views.
+The trace-writer fixture checks JSON escaping, numeric precision, locale
+independence, buffer reuse and completion-array ordering. Both GUI runs strictly
+decode the complete JSONL stream after normal quit.
 
 ## Diagnostics and trace interpretation
 
@@ -162,12 +165,18 @@ changes, paused draws and normal quit flush them. A short stopped-state
 collector retrieves delayed GTK completion feedback without requesting
 additional draws.
 
+Each event reuses a text buffer, avoiding a temporary JSON object graph for every
+frame. The output batch retains its existing 256 KiB flush threshold. Trace
+producers run synchronously on the GTK thread.
+
 | Record or field | Interpretation |
 | --- | --- |
 | `state` | Live control change, including the current anchor, target and checkpoint |
 | `frame` | A draw from one view, with `frame_clock_id`, `frame_counter`, `sample_clock_us`, raw `frame_time_us`, `displayed_time` and drawing cost |
+| `clock_us` | Monotonic time at the start of event construction |
 | `sample_clock_us` | The monotonic timestamp used to evaluate scene position for this draw |
 | `timing` | Delayed `completed_timings` for previously recorded draws on a particular clock |
+| `feedback_collected_us` | Monotonic time immediately after querying completed feedback, present whenever `completed_timings` is written |
 | `work` | Background PDF caching activity, identified by `pdf-prerender-deferred` or `pdf-prerender` in its `work` field |
 | `display_backend` | Runtime GDK display type, such as `GdkX11Display` or `GdkWaylandDisplay`, included in trace records |
 | `trace-drained` | Stopped-state collection finished or reached its 500 ms budget; `pending_frames` counts feedback still outstanding across all clocks |
@@ -185,6 +194,12 @@ timing to its originating draw using `(frame_clock_id, counter)`. Select a run
 using the draw's `scene`, `view` and `playback_id`; the latter identifies its
 monotonic anchor. A timing receipt can arrive after a new run starts, so its
 current playback metadata can differ from the originating draw.
+
+For a positive, non-expired presentation timestamp, check it against the
+originating draw's `sample_clock_us` and the timing record's
+`feedback_collected_us`. The latter is the upper observation bound. Older traces
+without that field leave this upper-bound check unverified; their `clock_us`
+records the earlier event-construction time.
 
 A completed timing with `presentation_time_us == 0` has no presentation
 timestamp. `expired: true` marks feedback that left GTK's history. Count those

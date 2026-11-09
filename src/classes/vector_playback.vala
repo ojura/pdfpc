@@ -76,6 +76,8 @@ namespace pdfpc {
         private int64 anchor_clock = 0;
         private FileStream? trace_stream;
         private StringBuilder trace_buffer = new StringBuilder();
+        // GTK-thread producers complete each event synchronously before reuse.
+        private VectorTraceWriter? trace_writer;
         private Gee.HashMap<Gdk.FrameClock, VectorTraceClock> trace_clocks =
             new Gee.HashMap<Gdk.FrameClock, VectorTraceClock>();
         private uint trace_drain_id = 0;
@@ -115,15 +117,15 @@ namespace pdfpc {
             int pending = 0;
             foreach (var trace in trace_clocks.values) {
                 if (trace.pending.size == 0) continue;
-                var builder = event_builder("timing");
-                builder.set_member_name("view"); builder.add_string_value(trace.view);
+                unowned VectorTraceWriter builder = event_builder("timing");
+                builder.add_string("view", trace.view);
                 append_completed_timings(builder, trace);
                 write_trace(builder);
                 pending += trace.pending.size;
             }
-            var builder = event_builder("trace-closed");
-            builder.set_member_name("pending_frames"); builder.add_int_value(pending);
-            builder.set_member_name("last_frame_recorded_us"); builder.add_int_value(last_frame_recorded_us);
+            unowned VectorTraceWriter builder = event_builder("trace-closed");
+            builder.add_int("pending_frames", pending);
+            builder.add_int("last_frame_recorded_us", last_frame_recorded_us);
             write_trace(builder, false, true);
             trace_stream = null;
         }
@@ -360,23 +362,20 @@ namespace pdfpc {
                 scene.checkpoints[current].label, playing ? "playing" : "paused", speed);
         }
 
-        private Json.Builder event_builder(string kind) {
-            var builder = new Json.Builder();
-            builder.begin_object();
-            builder.set_member_name("event"); builder.add_string_value(kind);
-            builder.set_member_name("clock_us"); builder.add_int_value(GLib.get_monotonic_time());
-            builder.set_member_name("page"); builder.add_int_value(page + 1);
-            builder.set_member_name("scene");
-            if (binding == null) builder.add_null_value();
-            else builder.add_string_value(binding.scene.id);
-            builder.set_member_name("time"); builder.add_double_value(time);
-            builder.set_member_name("playing"); builder.add_boolean_value(playing);
-            builder.set_member_name("playback_id"); builder.add_int_value(anchor_clock);
-            builder.set_member_name("anchor_clock_us"); builder.add_int_value(anchor_clock);
-            builder.set_member_name("anchor_time"); builder.add_double_value(anchor_time);
-            builder.set_member_name("speed"); builder.add_double_value(speed);
-            builder.set_member_name("target"); builder.add_double_value(target);
-            builder.set_member_name("display_backend"); builder.add_string_value(trace_display_backend);
+        private unowned VectorTraceWriter event_builder(string kind) {
+            if (trace_writer == null) trace_writer = new VectorTraceWriter();
+            unowned VectorTraceWriter builder = trace_writer;
+            builder.begin_event(kind, GLib.get_monotonic_time());
+            builder.add_int("page", page + 1);
+            builder.add_string("scene", binding == null ? null : binding.scene.id);
+            builder.add_double("time", time);
+            builder.add_bool("playing", playing);
+            builder.add_int("playback_id", anchor_clock);
+            builder.add_int("anchor_clock_us", anchor_clock);
+            builder.add_double("anchor_time", anchor_time);
+            builder.add_double("speed", speed);
+            builder.add_double("target", target);
+            builder.add_string("display_backend", trace_display_backend);
             return builder;
         }
 
@@ -388,39 +387,35 @@ namespace pdfpc {
             }
         }
 
-        private void write_trace(Json.Builder builder, bool stdout_too = false, bool flush = false) {
-            builder.end_object();
-            var generator = new Json.Generator();
-            generator.set_root(builder.get_root());
-            string data = generator.to_data(null);
+        private void write_trace(VectorTraceWriter builder, bool stdout_too = false, bool flush = false) {
+            builder.finish();
             if (trace_stream != null) {
-                trace_buffer.append(data);
+                trace_buffer.append(builder.data);
                 trace_buffer.append_c('\n');
                 if (flush || trace_buffer.len >= 256*1024) flush_trace();
             }
-            if (stdout_too) print("%s\n", data);
+            if (stdout_too) print("%s\n", builder.data);
         }
 
-        private void append_completed_timings(Json.Builder builder, VectorTraceClock trace) {
-            builder.set_member_name("frame_clock_id"); builder.add_int_value(trace.id);
-            builder.set_member_name("completed_timings"); builder.begin_array();
+        private void append_completed_timings(VectorTraceWriter builder, VectorTraceClock trace) {
+            builder.add_int("frame_clock_id", trace.id);
+            builder.begin_timings();
             for (int i = 0; i < trace.pending.size;) {
-                int64 counter = (int64) trace.pending.get(i);
+                // Name the owned nullable value so Vala releases get()'s boxed copy.
+                int64? pending_counter = trace.pending.get(i);
+                int64 counter = (int64) pending_counter;
                 var timing = trace.clock.get_timings(counter);
                 bool expired = counter < trace.clock.get_history_start();
                 if (expired || (timing != null && timing.get_complete())) {
-                    builder.begin_object();
-                    builder.set_member_name("counter"); builder.add_int_value(counter);
-                    builder.set_member_name("presentation_time_us");
-                    builder.add_int_value(expired ? 0 : timing.get_presentation_time());
-                    builder.set_member_name("expired"); builder.add_boolean_value(expired);
-                    builder.end_object();
+                    builder.add_timing(counter, expired ? 0 : timing.get_presentation_time(), expired);
                     trace.pending.remove_at(i);
                 } else {
                     i++;
                 }
             }
-            builder.end_array();
+            int64 collected = GLib.get_monotonic_time();
+            builder.end_timings();
+            builder.add_int("feedback_collected_us", collected);
         }
 
         private void schedule_trace_drain() {
@@ -437,16 +432,16 @@ namespace pdfpc {
                 int pending = 0;
                 foreach (var trace in trace_clocks.values) {
                     if (trace.pending.size == 0) continue;
-                    var builder = event_builder("timing");
-                    builder.set_member_name("view"); builder.add_string_value(trace.view);
+                    unowned VectorTraceWriter builder = event_builder("timing");
+                    builder.add_string("view", trace.view);
                     append_completed_timings(builder, trace);
                     write_trace(builder);
                     pending += trace.pending.size;
                 }
                 if (pending == 0 || GLib.get_monotonic_time() >= trace_drain_until) {
-                    var builder = event_builder("trace-drained");
-                    builder.set_member_name("pending_frames"); builder.add_int_value(pending);
-                    builder.set_member_name("last_frame_recorded_us"); builder.add_int_value(last_frame_recorded_us);
+                    unowned VectorTraceWriter builder = event_builder("trace-drained");
+                    builder.add_int("pending_frames", pending);
+                    builder.add_int("last_frame_recorded_us", last_frame_recorded_us);
                     write_trace(builder, false, true);
                     trace_drain_id = 0;
                     return false;
@@ -460,10 +455,9 @@ namespace pdfpc {
             if (trace_stream == null && !stdout_too) {
                 return;
             }
-            var builder = event_builder("state");
-            builder.set_member_name("reason"); builder.add_string_value(reason);
-            builder.set_member_name("checkpoint");
-            builder.add_int_value(binding == null ? -1 : binding.scene.checkpoint_at(time));
+            unowned VectorTraceWriter builder = event_builder("state");
+            builder.add_string("reason", reason);
+            builder.add_int("checkpoint", binding == null ? -1 : binding.scene.checkpoint_at(time));
             write_trace(builder, stdout_too, true);
             if (!playing) schedule_trace_drain();
         }
@@ -485,16 +479,16 @@ namespace pdfpc {
             if (trace_stream == null) {
                 return;
             }
-            var builder = event_builder("frame");
-            builder.set_member_name("view"); builder.add_string_value(view);
-            builder.set_member_name("displayed_time"); builder.add_double_value(displayed_time);
-            builder.set_member_name("sample_clock_us"); builder.add_int_value(sample_clock_us);
-            builder.set_member_name("render_us"); builder.add_int_value(render_us);
-            builder.set_member_name("render_cpu_us"); builder.add_int_value(render_cpu_us);
-            builder.set_member_name("width"); builder.add_int_value(width);
-            builder.set_member_name("height"); builder.add_int_value(height);
-            builder.set_member_name("cairo_target_type"); builder.add_int_value((int) target_type);
-            builder.set_member_name("cairo_group_target_type"); builder.add_int_value((int) group_target_type);
+            unowned VectorTraceWriter builder = event_builder("frame");
+            builder.add_string("view", view);
+            builder.add_double("displayed_time", displayed_time);
+            builder.add_int("sample_clock_us", sample_clock_us);
+            builder.add_int("render_us", render_us);
+            builder.add_int("render_cpu_us", render_cpu_us);
+            builder.add_int("width", width);
+            builder.add_int("height", height);
+            builder.add_int("cairo_target_type", (int) target_type);
+            builder.add_int("cairo_group_target_type", (int) group_target_type);
             if (clock != null) {
                 var trace = trace_clocks.get(clock);
                 if (trace == null) {
@@ -502,12 +496,12 @@ namespace pdfpc {
                     trace_clocks.set(clock, trace);
                 }
                 int64 counter = clock.get_frame_counter();
-                builder.set_member_name("frame_counter"); builder.add_int_value(counter);
-                builder.set_member_name("frame_time_us"); builder.add_int_value(clock.get_frame_time());
+                builder.add_int("frame_counter", counter);
+                builder.add_int("frame_time_us", clock.get_frame_time());
                 int64 refresh_interval, predicted_presentation;
                 clock.get_refresh_info(clock.get_frame_time(), out refresh_interval,
                     out predicted_presentation);
-                builder.set_member_name("refresh_interval_us"); builder.add_int_value(refresh_interval);
+                builder.add_int("refresh_interval_us", refresh_interval);
                 append_completed_timings(builder, trace);
                 if (counter != trace.last_frame_counter) {
                     trace.pending.add(counter);
@@ -522,13 +516,13 @@ namespace pdfpc {
         public void record_work(string name, string view, int work_page,
             int64 started_us, int64 wall_us, int64 cpu_us) {
             if (trace_stream == null) return;
-            var builder = event_builder("work");
-            builder.set_member_name("work"); builder.add_string_value(name);
-            builder.set_member_name("view"); builder.add_string_value(view);
-            builder.set_member_name("work_page"); builder.add_int_value(work_page + 1);
-            builder.set_member_name("started_us"); builder.add_int_value(started_us);
-            builder.set_member_name("wall_us"); builder.add_int_value(wall_us);
-            builder.set_member_name("cpu_us"); builder.add_int_value(cpu_us);
+            unowned VectorTraceWriter builder = event_builder("work");
+            builder.add_string("work", name);
+            builder.add_string("view", view);
+            builder.add_int("work_page", work_page + 1);
+            builder.add_int("started_us", started_us);
+            builder.add_int("wall_us", wall_us);
+            builder.add_int("cpu_us", cpu_us);
             write_trace(builder, false, !playing);
         }
     }

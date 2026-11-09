@@ -20,8 +20,25 @@ if(VECTOR_PROBE_POINTER_FLAG)
     target_compile_options(vector-probe PRIVATE -Wno-incompatible-pointer-types)
 endif()
 
+# Keep writer checks independent of GTK, a display and the Python image packages.
+pkg_check_modules(VECTOR_TRACE_PROBE REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0)
+vala_precompile(VECTOR_TRACE_WRITER_C
+    src/classes/vector_trace_writer.vala
+    tests/vector/trace_writer_probe.vala
+DIRECTORY
+    ${CMAKE_BINARY_DIR}/tests/vector/trace-generated
+)
+add_executable(vector-trace-writer-probe ${VECTOR_TRACE_WRITER_C})
+target_link_libraries(vector-trace-writer-probe PkgConfig::VECTOR_TRACE_PROBE m)
+if(VECTOR_PROBE_POINTER_FLAG)
+    target_compile_options(vector-trace-writer-probe PRIVATE -Wno-incompatible-pointer-types)
+endif()
+
 find_package(PythonInterp 3 QUIET)
 if(PYTHONINTERP_FOUND)
+    add_test(NAME vector-trace-writer
+        COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_trace_writer.py
+            $<TARGET_FILE:vector-trace-writer-probe>)
     execute_process(COMMAND ${PYTHON_EXECUTABLE} -c "import PIL, pypdf, reportlab"
         RESULT_VARIABLE VECTOR_PYTHON_DEPS OUTPUT_QUIET ERROR_QUIET)
     if(VECTOR_PYTHON_DEPS EQUAL 0)
