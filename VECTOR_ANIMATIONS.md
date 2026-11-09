@@ -33,6 +33,12 @@ to the directory containing `pdfpcrc`. These overrides also apply with
 source-tree resource paths. User CSS and user configuration keep their normal
 XDG locations.
 
+Launchers can set `PDFPC_TITLE_SUFFIX` to identify their packaged document or
+build. A nonempty value is appended in square brackets to both presenter and
+audience window titles, preserving the role and PDF title. Unset or empty values
+keep the ordinary titles. The viewer treats the suffix as plain text; the
+launcher supplies and formats any revision or timestamp.
+
 ## Presenter controls
 
 An animated slide starts paused. Normal Next plays to the next semantic

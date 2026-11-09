@@ -161,6 +161,12 @@ namespace pdfpc.Window {
             }
         }
 
+        protected string title_with_suffix(string base_title) {
+            string? suffix = Environment.get_variable("PDFPC_TITLE_SUFFIX");
+            if (suffix == null || suffix == "") return base_title;
+            return "%s [%s]".printf(base_title, suffix);
+        }
+
         public void enable_pointer(bool onoff) {
             if (onoff) {
                 this.pointer_drawing_surface.show();

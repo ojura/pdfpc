@@ -172,6 +172,8 @@ def main():
     source.write_text(json.dumps(fixture()), encoding="utf-8")
     pdf = output / "fixture.pdf"
     drawing = canvas.Canvas(str(pdf), pagesize=(1000, 750))
+    document_title = "Vector GUI title fixture"
+    drawing.setTitle(document_title)
     for index in range(3):
         drawing.setFont("Helvetica", 28)
         drawing.drawString(50, 690, f"Vector GUI test, page {index + 1}")
@@ -193,7 +195,9 @@ def main():
         display_number = display_reader.readline().strip()
     if not display_number:
         raise RuntimeError("Xvfb did not start")
+    title_suffix = "test-build 0123abcd | 2026-11-09T01:02:03Z"
     environment = {**os.environ, "DISPLAY": f":{display_number}", "GDK_BACKEND": "x11",
+                   "PDFPC_TITLE_SUFFIX": title_suffix,
                    "PDFPC_VECTOR_MANIFEST": str(source), "PDFPC_VECTOR_TRACE": str(trace),
                    "XDG_CONFIG_HOME": str(output / "config"),
                    "XDG_CACHE_HOME": str(output / "cache"), "NO_AT_BRIDGE": "1",
@@ -252,6 +256,15 @@ def main():
                                                env=environment, text=True).split()[-1]
         audience_id = subprocess.check_output(["xdotool", "search", "--name", "pdfpc - presentation"],
                                               env=environment, text=True).split()[-1]
+
+        def assert_window_titles():
+            for role, identifier in (("presenter", presenter_id), ("presentation", audience_id)):
+                title = subprocess.check_output(["xdotool", "getwindowname", identifier],
+                                                env=environment, text=True).strip()
+                assert title == f"pdfpc - {role} ({document_title}) [{title_suffix}]", title
+
+        assert_window_titles()
+        findings.append("Both window titles retain the role, PDF title and optional launcher suffix")
         subprocess.run(["xdotool", "windowmove", presenter_id, "0", "0", "windowsize", presenter_id,
                         "1280", "900", "windowmove", audience_id, "1500", "0"],
                        env=environment, check=True)
@@ -375,6 +388,7 @@ def main():
         wait_for(lambda: check_state(page=2), description="return to derivation")
         action("reload")
         wait_for(lambda: check_state(page=2, position=0, playing=False), description="reload resets timeline")
+        assert_window_titles()
         findings.append("Completed next, backward entry and document reload preserve navigation")
 
         subprocess.run(["xdotool", "windowsize", audience_id, "1200", "900"],

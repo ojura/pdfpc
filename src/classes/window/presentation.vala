@@ -41,8 +41,8 @@ namespace pdfpc.Window {
             }
             base(controller, interactive, screen_num, windowed, width, height);
 
-            this.title = "pdfpc - presentation (%s)".
-                printf(controller.metadata.get_title());
+            this.title = title_with_suffix("pdfpc - presentation (%s)".
+                printf(controller.metadata.get_title()));
 
             this.controller.update_request.connect(this.update);
 
