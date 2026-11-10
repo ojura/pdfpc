@@ -70,6 +70,10 @@ if(PYTHONINTERP_FOUND)
     execute_process(COMMAND ${PYTHON_EXECUTABLE} -c "import PIL, pypdf, reportlab"
         RESULT_VARIABLE VECTOR_PYTHON_DEPS OUTPUT_QUIET ERROR_QUIET)
     if(VECTOR_PYTHON_DEPS EQUAL 0)
+        add_test(NAME vector-transform
+            COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_transform.py
+                $<TARGET_FILE:vector-transform-probe>
+                --output ${CMAKE_BINARY_DIR}/tests/vector/transform)
         add_test(NAME vector-renderer
             COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/vector/test_renderer.py
                 $<TARGET_FILE:vector-probe> --output ${CMAKE_BINARY_DIR}/tests/vector/renderer)

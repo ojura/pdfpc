@@ -20,23 +20,9 @@ namespace pdfpc {
 
         public void draw(Cairo.Context cr, Metadata.Pdf metadata, double time,
             int width, int height, PresentationController.ScaledRectangle? zoom_area) {
-            double page_width = metadata.get_corrected_page_width(full_width);
-            double page_height = metadata.get_corrected_page_height(full_height);
-            double scale = double.min(width/page_width, height/page_height);
-            double x_offset = (width/scale - page_width)/2;
-            double y_offset = (height/scale - page_height)/2;
-            if (zoom_area != null) {
-                double zoom = 1/double.max(zoom_area.width, zoom_area.height);
-                double x_zoom = double.max(0, (zoom_area.height - zoom_area.width)/2);
-                double y_zoom = double.max(0, (zoom_area.width - zoom_area.height)/2);
-                x_offset -= page_width*(zoom_area.x - x_zoom);
-                y_offset -= page_height*(zoom_area.y - y_zoom);
-                scale *= zoom;
-            }
             cr.save();
-            cr.scale(scale, scale);
-            cr.translate(x_offset - metadata.get_horizontal_offset(false, full_width),
-                y_offset - metadata.get_vertical_offset(false, full_height));
+            Renderer.Pdf.apply_page_transform(cr, metadata, full_width, full_height,
+                false, width, height, zoom_area);
             double box_width = area.x2 - area.x1;
             double box_height = area.y2 - area.y1;
             cr.rectangle(area.x1, full_height - area.y2, box_width, box_height);

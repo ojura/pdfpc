@@ -53,6 +53,28 @@ namespace pdfpc {
             this.cache = new Renderer.Cache();
         }
 
+        /** Map whole-page PDF coordinates into a slide or notes viewport. */
+        public static void apply_page_transform(Cairo.Context cr, Metadata.Pdf metadata,
+            double full_width, double full_height, bool notes_area, int width, int height,
+            PresentationController.ScaledRectangle? zoom_area = null) {
+            double page_width = metadata.get_corrected_page_width(full_width);
+            double page_height = metadata.get_corrected_page_height(full_height);
+            double scale = double.min(width/page_width, height/page_height);
+            double h_offset = (width/scale - page_width)/2;
+            double v_offset = (height/scale - page_height)/2;
+            if (zoom_area != null) {
+                double zoom = 1/double.max(zoom_area.width, zoom_area.height);
+                double h_zoom = double.max(0, (zoom_area.height - zoom_area.width)/2);
+                double v_zoom = double.max(0, (zoom_area.width - zoom_area.height)/2);
+                h_offset -= page_width*(zoom_area.x - h_zoom);
+                v_offset -= page_height*(zoom_area.y - v_zoom);
+                scale *= zoom;
+            }
+            cr.scale(scale, scale);
+            cr.translate(h_offset - metadata.get_horizontal_offset(notes_area, full_width),
+                v_offset - metadata.get_vertical_offset(notes_area, full_height));
+        }
+
         /**
          * Render the given slide_number to a Cairo.ImageSurface and return it.
          *
@@ -103,44 +125,10 @@ namespace pdfpc {
             cr.rectangle(0, 0, width, height);
             cr.fill();
 
-            // Calculate the scaling factor and the offsets for centering
-            double full_page_width, corrected_page_width, full_page_height, corrected_page_height;
+            double full_page_width, full_page_height;
             page.get_size(out full_page_width, out full_page_height);
-            corrected_page_width = metadata.get_corrected_page_width(full_page_width);
-            corrected_page_height = metadata.get_corrected_page_height(full_page_height);
-
-            double scaling_factor, h_offset, v_offset;
-            if (width/corrected_page_width < height/corrected_page_height) {
-                scaling_factor = width/corrected_page_width;
-                h_offset = 0;
-                v_offset = (height/scaling_factor - corrected_page_height)/2;
-            } else {
-                scaling_factor = height/corrected_page_height;
-                h_offset = (width/scaling_factor - corrected_page_width)/2;
-                v_offset = 0;
-            }
-
-            if (zoom_area != null) {
-                double zoom, h_zoom_offset, v_zoom_offset;
-                if (zoom_area.width > zoom_area.height) {
-                    zoom = 1/zoom_area.width;
-                    h_zoom_offset = 0;
-                    v_zoom_offset = (zoom_area.width - zoom_area.height)/2;
-                } else {
-                    zoom = 1/zoom_area.height;
-                    h_zoom_offset = (zoom_area.height - zoom_area.width)/2;
-                    v_zoom_offset = 0;
-                }
-                h_offset -= corrected_page_width*(zoom_area.x - h_zoom_offset);
-                v_offset -= corrected_page_height*(zoom_area.y - v_zoom_offset);
-
-                scaling_factor *= zoom;
-            }
-
-            cr.scale(scaling_factor, scaling_factor);
-
-            cr.translate(-metadata.get_horizontal_offset(notes_area, full_page_width) + h_offset,
-                -metadata.get_vertical_offset(notes_area, full_page_height) + v_offset);
+            apply_page_transform(cr, metadata, full_page_width, full_page_height,
+                notes_area, width, height, zoom_area);
 
             page.render(cr);
 
@@ -197,4 +185,3 @@ namespace pdfpc {
         SLIDE_DOES_NOT_EXIST;
     }
 }
-

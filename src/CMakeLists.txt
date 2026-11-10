@@ -239,6 +239,7 @@ if(BUILD_TESTING)
         target_link_libraries(${target} ${viewer_libraries})
     endfunction()
     add_pdfpc_class_probe(vector-controller-probe tests/vector/controller_probe.vala)
+    add_pdfpc_class_probe(vector-transform-probe tests/vector/transform_probe.vala)
 endif()
 
 if(WIN32)
