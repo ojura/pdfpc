@@ -14,6 +14,20 @@ void pump(uint milliseconds) {
     } while (GLib.get_monotonic_time() < until);
 }
 
+class ProbePresenter : pdfpc.Window.Presenter {
+    public ProbePresenter(pdfpc.PresentationController controller) {
+        base(controller, 0, true);
+    }
+
+    public bool pause_indicator_visible {
+        get { return pause_icon != null && pause_icon.get_visible(); }
+    }
+
+    public bool pause_indicator_mapped {
+        get { return pause_icon != null && pause_icon.get_mapped(); }
+    }
+}
+
 int main(string[] args) {
     Gtk.init(ref args);
     if (args.length != 3) return 2;
@@ -113,6 +127,33 @@ int main(string[] args) {
             print("READY hang\n");
             stdout.flush();
             while (true) pump(100);
+        case "presenter-resume":
+            var presenter = new ProbePresenter(controller);
+            controller.presenter = presenter;
+            presenter.show_all();
+            pump(200);
+            presenter.update();
+            controller.trigger_action("start", null);
+            foreach (var action in new string[] {"next", "vectorToggle", "vectorPlayAll"}) {
+                animation.seek(0);
+                controller.toggle_pause();
+                pump(50);
+                check(controller.is_paused() && presenter.pause_indicator_mapped,
+                    "The actual presenter must display the paused talk indicator");
+                controller.fade_to_black();
+                controller.trigger_action("vectorToggle", null);
+                controller.trigger_action("vectorPlayAll", null);
+                pump(50);
+                check(controller.is_paused() && presenter.pause_indicator_visible,
+                    "Blocked direct playback must retain the visible paused indicator");
+                controller.fade_to_black();
+                controller.trigger_action(action, null);
+                pump(50);
+                check(controller.is_running() && !presenter.pause_indicator_visible,
+                    "Successful animation resume must clear the presenter's pause indicator");
+            }
+            presenter.hide();
+            break;
         default:
             throw new CheckFailure.FAILED("Unknown controller case");
         }

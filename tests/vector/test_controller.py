@@ -61,6 +61,8 @@ class ControllerTests(unittest.TestCase):
     def test_no_page_duration(self): self.run_case("no-duration", timed=False)
     def test_blanked_play_keeps_stopped_timer(self): self.run_case("blocked-stopped")
     def test_blanked_play_keeps_paused_timer(self): self.run_case("blocked-paused")
+    def test_presenter_pause_indicator_tracks_animation_resume(self):
+        self.run_case("presenter-resume", timed=False)
 
     def test_timeout_closes_display_bus_and_probe(self):
         session = PrivateGuiSession(self.directory / "timeout", self.environment())

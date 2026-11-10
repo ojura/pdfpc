@@ -77,6 +77,7 @@ namespace pdfpc {
             // when the lecturer begins another animation segment.
             if (!was_running && this.is_running()) {
                 this.start_autoadvance_timer(this.current_slide_number);
+                this.controllables_update();
             }
         }
 
