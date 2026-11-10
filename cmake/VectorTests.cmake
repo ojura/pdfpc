@@ -76,7 +76,15 @@ if(PYTHONINTERP_FOUND)
         find_program(VECTOR_XVFB Xvfb)
         find_program(VECTOR_XDOTOOL xdotool)
         find_program(VECTOR_DBUS_RUN dbus-run-session)
+        find_program(VECTOR_DBUS_DAEMON dbus-daemon)
         find_program(VECTOR_IMAGE_IMPORT import)
+        if(VECTOR_XVFB AND VECTOR_DBUS_DAEMON AND UNIX)
+            add_test(NAME vector-controller
+                COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_controller.py
+                    $<TARGET_FILE:vector-controller-probe>
+                    --output ${CMAKE_BINARY_DIR}/tests/vector/controller)
+            set_tests_properties(vector-controller PROPERTIES TIMEOUT 90)
+        endif()
         if(VECTOR_XVFB AND VECTOR_XDOTOOL AND VECTOR_DBUS_RUN AND VECTOR_IMAGE_IMPORT)
             add_test(NAME vector-gui
                 COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/vector/test_gui.py

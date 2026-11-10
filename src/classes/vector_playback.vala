@@ -71,6 +71,7 @@ namespace pdfpc {
         public double time { get; private set; default = 0; }
         public double speed { get; private set; default = 1; }
         public bool playing { get; private set; default = false; }
+        public signal void started();
         private double target = 0;
         private double anchor_time = 0;
         private int64 anchor_clock = 0;
@@ -222,6 +223,7 @@ namespace pdfpc {
             anchor_time = time;
             anchor_clock = GLib.get_monotonic_time();
             playing = true;
+            started();
             changed("play");
         }
 

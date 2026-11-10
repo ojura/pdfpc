@@ -159,9 +159,7 @@ if (HAVE_CLOCK_GETTIME AND HAVE_CLOCK_THREAD_CPUTIME_ID)
     set(EXTRA_VALA_OPTIONS ${EXTRA_VALA_OPTIONS} -D THREAD_CPU_CLOCK)
 endif()
 
-vala_precompile(VALA_C
-    ${VALA_SRC}
-PACKAGES
+set(PDFPC_VALA_PACKAGES
     json-glib-1.0
     gio-2.0
     gee-0.8
@@ -172,16 +170,21 @@ PACKAGES
     posix
     ${MOVIE_PACKAGES}
     ${MDVIEW_PACKAGES}
-    ${REST_PACKAGES}
-OPTIONS
+    ${REST_PACKAGES})
+set(PDFPC_VALA_OPTIONS
     --enable-experimental
-    ${EXTRA_VALA_OPTIONS}
-CUSTOM_VAPIS
+    ${EXTRA_VALA_OPTIONS})
+set(PDFPC_CUSTOM_VAPIS
     ${CMAKE_CURRENT_BINARY_DIR}/paths.vala
     ${CMAKE_CURRENT_SOURCE_DIR}/custom_binding.vapi
     ${CMAKE_CURRENT_SOURCE_DIR}/libmarkdown.vapi
-    ${CMAKE_CURRENT_SOURCE_DIR}/libqrencode.vapi
-)
+    ${CMAKE_CURRENT_SOURCE_DIR}/libqrencode.vapi)
+
+vala_precompile(VALA_C
+    ${VALA_SRC}
+    PACKAGES ${PDFPC_VALA_PACKAGES}
+    OPTIONS ${PDFPC_VALA_OPTIONS}
+    CUSTOM_VAPIS ${PDFPC_CUSTOM_VAPIS})
 
 add_executable(pdfpc
     ${VALA_C}
@@ -209,6 +212,34 @@ target_link_libraries(pdfpc
     ${GSTVIDEO_LIBRARIES}
     ${ADDITIONAL_LIBS}
 )
+
+if(BUILD_TESTING)
+    # Compile the production classes with a test entry point. Source selection,
+    # feature flags and linked libraries follow the viewer target above.
+    function(add_pdfpc_class_probe target entry)
+        set(probe_sources)
+        foreach(source IN LISTS VALA_SRC)
+            if(NOT source STREQUAL "pdfpc.vala")
+                list(APPEND probe_sources "src/${source}")
+            endif()
+        endforeach()
+        set(native_sources)
+        foreach(source IN LISTS C_SRC)
+            list(APPEND native_sources "${PROJECT_SOURCE_DIR}/src/${source}")
+        endforeach()
+        set(CMAKE_CURRENT_SOURCE_DIR "${PROJECT_SOURCE_DIR}")
+        vala_precompile(PROBE_C
+            ${probe_sources} ${entry}
+            DIRECTORY "${CMAKE_BINARY_DIR}/tests/vector/${target}-generated"
+            PACKAGES ${PDFPC_VALA_PACKAGES}
+            OPTIONS ${PDFPC_VALA_OPTIONS}
+            CUSTOM_VAPIS ${PDFPC_CUSTOM_VAPIS})
+        add_executable(${target} ${PROBE_C} ${native_sources})
+        get_target_property(viewer_libraries pdfpc LINK_LIBRARIES)
+        target_link_libraries(${target} ${viewer_libraries})
+    endfunction()
+    add_pdfpc_class_probe(vector-controller-probe tests/vector/controller_probe.vala)
+endif()
 
 if(WIN32)
     # Resources

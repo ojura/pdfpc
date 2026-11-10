@@ -62,6 +62,7 @@ set (CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [[
     System::Call 'Shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
 ]])
 
+include(CTest)
 add_subdirectory(src)
 add_subdirectory(icons)
 add_subdirectory(man)
@@ -71,7 +72,6 @@ add_subdirectory(completions)
 
 include(CPack)
 
-include(CTest)
 if(BUILD_TESTING)
     include(cmake/VectorTests.cmake)
 endif()

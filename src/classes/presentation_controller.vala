@@ -69,6 +69,17 @@ namespace pdfpc {
         public VectorPlayback? vector_animation { get; private set; default = null; }
         public signal void vector_changed();
 
+        private void on_vector_started() {
+            bool was_running = this.is_running();
+            this.timer.run();
+            // The first page has already emitted entering_slide. Arm its
+            // duration on start/resume, but retain a running page's deadline
+            // when the lecturer begins another animation segment.
+            if (!was_running && this.is_running()) {
+                this.start_autoadvance_timer(this.current_slide_number);
+            }
+        }
+
         public void switch_to_slide_number(int slide_number, bool skip_history=false) {
             if (slide_number == this.current_slide_number) {
                 // already there...
@@ -446,6 +457,7 @@ namespace pdfpc {
 
                     this.current_slide_number = 0;
                     this.vector_animation = new VectorPlayback(this);
+                    this.vector_animation.started.connect(this.on_vector_started);
 
                     this.pen_drawing = Drawings.create(metadata);
                     current_pen_drawing_tool = pen_drawing.pen;
