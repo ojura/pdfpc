@@ -27,8 +27,7 @@ namespace pdfpc.Renderer {
          */
         public static Cairo.Surface? render(string filename,
             int width, int height) {
-            var load_icon_path = Path.build_filename(Paths.get_data_dir(Options.no_install),
-                "icons", filename);
+            string load_icon_path = Resources.resolve(Path.build_filename("icons", filename));
             File icon_file = File.new_for_path(load_icon_path);
 
             try {

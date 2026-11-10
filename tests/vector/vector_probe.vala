@@ -43,10 +43,12 @@ int main(string[] args) {
             }
             var cr = new Cairo.Context(output);
             scene.draw_fitted(cr, time, width, height);
-            if (args[5].has_suffix(".png")) output.write_to_png(args[5]);
+            Cairo.Status file_status = Cairo.Status.SUCCESS;
+            if (args[5].has_suffix(".png")) file_status = output.write_to_png(args[5]);
             output.finish();
-            if (output.status() != Cairo.Status.SUCCESS) {
-                stderr.printf("Cairo output failed: %s\n", output.status().to_string());
+            var status = file_status != Cairo.Status.SUCCESS ? file_status : output.status();
+            if (status != Cairo.Status.SUCCESS) {
+                stderr.printf("Cairo output failed: %s\n", status.to_string());
                 return 1;
             }
             return 0;
@@ -69,12 +71,21 @@ int main(string[] args) {
                 if (i >= 0) { samples.add(elapsed); total += elapsed; }
             }
             samples.sort((a,b) => a < b ? -1 : (a > b ? 1 : 0));
-            stdout.printf("{\"scene\":\"%s\",\"width\":%d,\"height\":%d,\"frames\":%d," +
-                "\"mean_ms\":%.4f,\"p50_ms\":%.4f,\"p95_ms\":%.4f,\"p99_ms\":%.4f," +
-                "\"max_ms\":%.4f,\"mean_capacity_fps\":%.2f}\n",
-                scene.id, width, height, frames, total/frames, (double) samples[frames/2],
-                (double) samples[(int)(frames*0.95)], (double) samples[(int)(frames*0.99)],
-                (double) samples[frames - 1], frames*1000/total);
+            var report = new Json.Object();
+            report.set_string_member("scene", scene.id);
+            report.set_int_member("width", width);
+            report.set_int_member("height", height);
+            report.set_int_member("frames", frames);
+            report.set_double_member("mean_ms", total/frames);
+            report.set_double_member("p50_ms", (double) samples[frames/2]);
+            report.set_double_member("p95_ms", (double) samples[(int)(frames*0.95)]);
+            report.set_double_member("p99_ms", (double) samples[(int)(frames*0.99)]);
+            report.set_double_member("max_ms", (double) samples[frames - 1]);
+            if (total > 0) report.set_double_member("mean_capacity_fps", frames*1000/total);
+            else report.set_null_member("mean_capacity_fps");
+            var result = new Json.Node(Json.NodeType.OBJECT);
+            result.set_object(report);
+            stdout.printf("%s\n", Json.to_string(result, false));
             return 0;
         }
         stderr.printf("Invalid command or arguments\n");

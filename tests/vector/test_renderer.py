@@ -4,6 +4,8 @@
 import argparse
 import copy
 import json
+import math
+import os
 import subprocess
 import tempfile
 import unittest
@@ -47,7 +49,7 @@ class RendererTests(unittest.TestCase):
 
     def invoke(self, *args, check=True):
         result = subprocess.run([PROBE, *map(str, args)], capture_output=True, text=True,
-                                env={**__import__("os").environ, "G_DEBUG": "fatal-criticals"})
+                                env={**os.environ, "G_DEBUG": "fatal-criticals"})
         if check:
             self.assertEqual(result.returncode, 0, result.stderr)
         return result
@@ -99,6 +101,29 @@ class RendererTests(unittest.TestCase):
         operators = {operator for _, operator in page.get_contents().operations}
         self.assertTrue(operators.intersection({b"m", b"re"}))
         self.assertIn(b"f", operators)
+
+    def test_output_write_errors_are_reported(self):
+        source = self.write(fixture())
+        for extension in ("png", "pdf", "svg"):
+            with self.subTest(extension=extension):
+                destination = self.directory / "absent-directory" / f"state.{extension}"
+                result = self.invoke("render", source, "rotation", 1.5,
+                                     destination, 100, 60, check=False)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("Cairo output failed", result.stderr)
+                self.assertFalse(destination.exists())
+
+    def test_benchmark_encodes_scene_identifiers_as_json(self):
+        data = fixture()
+        identifier = 'quoted "scene" \\ slash\nnew line\t\u03b8'
+        data["scenes"][0]["id"] = identifier
+        source = self.write(data)
+        result = self.invoke("benchmark", source, identifier, 100, 60, 10)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["scene"], identifier)
+        self.assertEqual((report["width"], report["height"], report["frames"]), (100, 60, 10))
+        self.assertTrue(all(math.isfinite(value) for name, value in report.items()
+                            if name != "scene" and value is not None))
 
     def test_empty_inputs_fail_without_glib_criticals(self):
         for index, contents in enumerate(("", " \t\r\n")):

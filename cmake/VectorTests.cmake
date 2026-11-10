@@ -1,7 +1,7 @@
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(VECTOR_PROBE REQUIRED IMPORTED_TARGET json-glib-1.0 gee-0.8 cairo)
 
-# Compile the same renderer as pdfpc; no separate rendering implementation.
+# Compile the renderer used by pdfpc.
 vala_precompile(VECTOR_PROBE_C
     src/classes/vector_scene.vala
     tests/vector/vector_probe.vala
@@ -34,11 +34,39 @@ if(VECTOR_PROBE_POINTER_FLAG)
     target_compile_options(vector-trace-writer-probe PRIVATE -Wno-incompatible-pointer-types)
 endif()
 
+# Both targets compile the production resolver. The second exercises its
+# executable-relative Windows branch on every development platform.
+foreach(variant IN ITEMS native windows)
+    set(resource_options)
+    if(variant STREQUAL "windows")
+        list(APPEND resource_options -D WIN32)
+    endif()
+    vala_precompile(RESOURCE_PROBE_C
+        src/classes/resources.vala
+        tests/vector/resource_probe.vala
+        DIRECTORY ${CMAKE_BINARY_DIR}/tests/vector/resources-${variant}-generated
+        OPTIONS ${resource_options})
+    add_executable(vector-resource-${variant}-probe ${RESOURCE_PROBE_C})
+    target_link_libraries(vector-resource-${variant}-probe PkgConfig::VECTOR_TRACE_PROBE)
+    if(VECTOR_PROBE_POINTER_FLAG)
+        target_compile_options(vector-resource-${variant}-probe PRIVATE -Wno-incompatible-pointer-types)
+    endif()
+endforeach()
+
 find_package(PythonInterp 3 QUIET)
 if(PYTHONINTERP_FOUND)
     add_test(NAME vector-trace-writer
         COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_trace_writer.py
             $<TARGET_FILE:vector-trace-writer-probe>)
+    foreach(variant IN ITEMS native windows)
+        set(resource_arguments)
+        if(variant STREQUAL "windows")
+            list(APPEND resource_arguments --windows-branch)
+        endif()
+        add_test(NAME vector-resources-${variant}
+            COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_resources.py
+                $<TARGET_FILE:vector-resource-${variant}-probe> ${resource_arguments})
+    endforeach()
     execute_process(COMMAND ${PYTHON_EXECUTABLE} -c "import PIL, pypdf, reportlab"
         RESULT_VARIABLE VECTOR_PYTHON_DEPS OUTPUT_QUIET ERROR_QUIET)
     if(VECTOR_PYTHON_DEPS EQUAL 0)

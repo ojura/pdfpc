@@ -137,9 +137,11 @@ namespace pdfpc {
         public ProgressStatus progress_status { get; protected set; }
 
         public void start_autoadvance_timer(int slide_number) {
-            double duration = this.metadata.get_slide_duration(slide_number);
-            if (duration < 0) {
-                return;
+            // cancel any pending page advance (e.g., if going backwards
+            // manually through a page with autoadvance)
+            if (this.autoadvance_timeout_id != 0) {
+                GLib.Source.remove(this.autoadvance_timeout_id);
+                this.autoadvance_timeout_id = 0;
             }
 
             // no autoadvance if paused/not started yet
@@ -147,9 +149,9 @@ namespace pdfpc {
                 return;
             }
 
-            if (this.autoadvance_timeout_id != 0) {
-                GLib.Source.remove(this.autoadvance_timeout_id);
-                this.autoadvance_timeout_id = 0;
+            double duration = this.metadata.get_slide_duration(slide_number);
+            if (duration < 0) {
+                return;
             }
 
             var next_slide = this.current_slide_number + 1;
@@ -1286,8 +1288,10 @@ namespace pdfpc {
             add_action("cycleTimerMode", this.cycle_timer,
                 "Cycle the timer view");
 
-            add_action("windowed", this.toggle_windowed,
-                "Toggle the windowed state");
+            add_action_with_parameter("windowed", GLib.VariantType.STRING,
+                this.toggle_windowed,
+                "Toggle the windowed state (presenter, presentation)",
+                "screen");
 
             add_action("blank", this.fade_to_black,
                 "Blank the presentation screen");
@@ -1909,10 +1913,11 @@ namespace pdfpc {
             this.controllables_update();
         }
 
-        protected void toggle_windowed() {
-            if (this.presenter != null) {
+        protected void toggle_windowed(Variant? type) {
+            var typestr = type.get_string();
+            if (typestr == "presenter" && this.presenter != null) {
                 this.presenter.toggle_windowed();
-            } else if (this.presentation != null) {
+            } else if (typestr == "presentation" && this.presentation != null) {
                 this.presentation.toggle_windowed();
             }
         }
@@ -1921,10 +1926,6 @@ namespace pdfpc {
          * Fill the presentation display with black
          */
         public void fade_to_black() {
-            if (this.single_screen_mode) {
-                return;
-            }
-
             this.faded_to_black = !this.faded_to_black;
             if (this.faded_to_black && this.vector_animation != null) this.vector_animation.pause();
             this.controllables_update();

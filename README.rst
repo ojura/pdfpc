@@ -116,7 +116,7 @@ In order to compile and run pdfpc, the following requirements need to be met:
 
 E.g., on Ubuntu 22.04 onward, you can install these dependencies with::
 
-    sudo apt-get install cmake valac libgee-0.8-dev libpoppler-glib-dev libgtk-3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libjson-glib-dev libmarkdown2-dev libwebkit2gtk-4.1-dev libsoup3.0-dev libqrencode-dev gstreamer1.0-gtk3
+    sudo apt-get install cmake valac libgee-0.8-dev libpoppler-glib-dev libgtk-3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libjson-glib-dev libmarkdown2-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libqrencode-dev gstreamer1.0-gtk3
 
 (the last one is a run-time dependence). You should also consider installing all
 plugins to support required video formats; chances are they are already present
@@ -143,7 +143,7 @@ On macOS with MacPorts, you can install all dependencies using the `port` comman
 
 On Windows with MSYS2/MinGW-w64, the dependencies are installed with::
 
-    pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config mingw-w64-x86_64-vala mingw-w64-x86_64-libgee mingw-w64-x86_64-poppler mingw-w64-x86_64-gtk3 mingw-w64-x86_64-gstreamer mingw-w64-x86_64-gst-plugins-base mingw-w64-x86_64-json-glib mingw-w64-x86_64-libsoup mingw-w64-x86_64-qrencode mingw-w64-x86_64-discount
+    pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config mingw-w64-x86_64-vala mingw-w64-x86_64-libgee mingw-w64-x86_64-poppler mingw-w64-x86_64-gtk3 mingw-w64-x86_64-gstreamer mingw-w64-x86_64-gst-plugins-base mingw-w64-x86_64-json-glib mingw-w64-x86_64-libsoup mingw-w64-x86_64-qrencode mingw-w64-x86_64-discount mingw-w64-x86_64-imagemagick mingw-w64-x86_64-gst-plugins-good mingw-w64-x86_64-gst-plugin-gtk
 
 (change `x86_64` to `i686` if you want to compile the 32-bit variant).
 

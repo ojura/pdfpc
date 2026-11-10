@@ -502,8 +502,7 @@ namespace pdfpc {
             if (Options.rest_static_root.has_prefix("/")) {
                 this.static_root = Options.rest_static_root;
             } else {
-                this.static_root = Path.build_filename(Paths.get_data_dir(Options.no_install),
-                    Options.rest_static_root);
+                this.static_root = Resources.resolve(Options.rest_static_root);
             }
 
             this.add_handler("/api", api_handler);

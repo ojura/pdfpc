@@ -111,14 +111,14 @@ namespace pdfpc {
 #if REST
             {"rest-port", 'p', 0, OptionArg.INT,
                 ref Options.rest_port,
-                "REST port number [8088]", null},
+                "REST port number [8088]", "P"},
 #endif
             {"page", 'P', 0, OptionArg.INT,
                 ref page_hnum,
                 "Go to page number N directly after startup", "N"},
             {"page-transition", 'r', 0, OptionArg.STRING,
                 ref Options.default_transition,
-                "Set default page transition", "TYPE"},
+                "Set default page transition (type[:duration[:angle[:alignment[:direction]]]])", "TYPE"},
             {"pdfpc-location", 'R', 0, OptionArg.STRING,
                 ref Options.pdfpc_location,
                 "Full path location to a pdfpc file", "PATH"},
@@ -144,7 +144,7 @@ namespace pdfpc {
 #endif
             {"windowed", 'w', 0, OptionArg.STRING,
                 ref Options.windowed,
-                "Run in the given windowed mode", "MODE"},
+                "Run in the given windowed mode (none|both|presentation|presenter)", "MODE"},
             {"wayland-workaround", 'W', 0, 0,
                 ref Options.wayland_workaround,
                 "Enable Wayland-specific workaround", null},
@@ -175,6 +175,7 @@ namespace pdfpc {
 
             var context = new OptionContext("<pdf-file>");
             context.add_main_entries(options, null);
+            context.set_summary("See man pages pdfpc(1) and pdfpcrc(5) for detailed explanations.");
 
             try {
                 context.parse(ref args);
@@ -208,8 +209,7 @@ namespace pdfpc {
             Gtk.StyleContext.add_provider_for_screen(Gdk.Display.get_default().get_default_screen(),
                 userProvider, Gtk.STYLE_PROVIDER_PRIORITY_USER);
 
-            var distCssPath = Path.build_filename(Paths.get_data_dir(Options.no_install),
-                "css/pdfpc.css");
+            string distCssPath = Resources.resolve("css/pdfpc.css");
             var legacyUserCssPath = Path.build_filename(GLib.Environment.get_user_config_dir(), "pdfpc.css");
             var userCssPath = Path.build_filename(GLib.Environment.get_user_config_dir(), "pdfpc", "pdfpc.css");
 
@@ -259,9 +259,10 @@ namespace pdfpc {
                     var monitor = display.get_monitor(i);
                     int sf = monitor.get_scale_factor();
                     var geo = monitor.get_geometry();
+                    var model = monitor.get_model();
                     GLib.print(" %d: %c %s \t[%dx%d+%d+%d@%dHz \tscale=%d%%]\n",
                         i, monitor.is_primary() ? '*':' ',
-                        monitor.get_model(),
+                        model == null ? "-":model,
                         geo.width*sf, geo.height*sf,
                         geo.x*sf, geo.y*sf,
                         (monitor.get_refresh_rate() + 500)/1000,
@@ -279,8 +280,7 @@ namespace pdfpc {
 
             ConfigFileReader configFileReader = new ConfigFileReader();
 
-            var systemConfig = Path.build_filename(Paths.get_config_dir(Options.no_install),
-                "pdfpcrc");
+            string systemConfig = Resources.resolve_system_config();
             configFileReader.readConfig(systemConfig);
 
             // First, try the XDG config directory
@@ -402,6 +402,17 @@ namespace pdfpc {
 
             int primary_monitor_num = 0, secondary_monitor_num = 0;
             int presenter_monitor = -1, presentation_monitor = -1;
+
+            // Check if the screen(s) are given by their index instead of model
+            if (Options.presenter_screen != null &&
+                Options.presenter_screen.length == 1) {
+                presenter_monitor = int.parse(Options.presenter_screen);
+            }
+            if (Options.presentation_screen != null &&
+                Options.presentation_screen.length == 1) {
+                presentation_monitor = int.parse(Options.presentation_screen);
+            }
+
             int n_monitors = display.get_n_monitors();
             for (int i = 0; i < n_monitors; i++) {
                 // First, try to satisfy user's preferences
@@ -429,13 +440,13 @@ namespace pdfpc {
 
             // Bail out if an explicitly requested monitor is not found
             if (Options.presenter_screen != null &&
-                presenter_monitor == -1) {
+                (presenter_monitor < 0 || presenter_monitor >= n_monitors)) {
                 GLib.printerr("Monitor \"%s\" not found\n",
                     Options.presenter_screen);
                 Process.exit(1);
             }
             if (Options.presentation_screen != null &&
-                presentation_monitor == -1) {
+                (presentation_monitor < 0 || presentation_monitor >= n_monitors)) {
                 GLib.printerr("Monitor \"%s\" not found\n",
                     Options.presentation_screen);
                 Process.exit(1);
@@ -564,6 +575,7 @@ namespace pdfpc {
          * Basic application entry point
          */
         public static int main (string[] args) {
+            Resources.init(args[0]);
             var application = new Application();
             application.run(args);
 

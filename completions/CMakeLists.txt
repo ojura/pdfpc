@@ -1,0 +1,4 @@
+install(FILES pdfpc.bash
+    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/bash-completion/completions"
+    PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+)
