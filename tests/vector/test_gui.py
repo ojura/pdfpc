@@ -16,6 +16,7 @@ sys.dont_write_bytecode = True
 from reportlab.pdfgen import canvas
 
 from test_renderer import fixture
+from trace_metrics import timing_report
 
 
 def wait_for(check, timeout=10, description="condition"):
@@ -524,20 +525,14 @@ def main():
 
         clock_report = check_frame_clocks(records)
         findings.append("Both views evaluate monotonic draw samples from the shared playback anchor")
-        frames = [e for e in records if e["event"] == "frame" and e["view"] == "presentation" and e["playing"]]
-        clock_intervals = [(b["clock_us"] - a["clock_us"])/1000 for a, b in zip(frames, frames[1:])
-                           if 0 < b["displayed_time"] - a["displayed_time"] < 0.05 and
-                           b["clock_us"] - a["clock_us"] < 100000]
-        render_us = sorted(e["render_us"] for e in frames)
-        report = {"checks": findings, "animated_audience_frames": len(frames),
+        measured_timing = timing_report(records)
+        findings.append("Draw-event cadence and presentation feedback are reported separately with coverage and exclusions")
+        report = {"checks": findings,
                   "trace_schema": schema_report,
                   "per_view_clocks": clock_report, "endpoint_timing": endpoint_report,
                   "first_checkpoint_timing": first_checkpoint_report,
                   "shutdown_timing": shutdown_report,
-                  "audience_render_p95_ms": render_us[int(len(render_us)*0.95)]/1000,
-                  "median_frame_interval_ms": sorted(clock_intervals)[len(clock_intervals)//2],
-                  "frame_intervals_under_20ms": sum(x < 20 for x in clock_intervals),
-                  "frame_interval_count": len(clock_intervals)}
+                  "timing": measured_timing}
         (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps(report, indent=2))
     finally:
