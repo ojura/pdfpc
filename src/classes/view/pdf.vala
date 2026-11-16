@@ -60,18 +60,55 @@ namespace pdfpc {
         private bool vector_in_tick = false;
         private VectorBinding? vector_displayed_binding = null;
         private double vector_displayed_time = 0;
+        private bool vector_ready = false;
+        private bool destroyed = false;
+        private ulong vector_changed_handler = 0;
+        private TransitionManager? transition = null;
+        private Cairo.ImageSurface? transition_next = null;
+        private uint transition_steps_queued = 0;
+
+        private bool audience_frozen() {
+            return controller.presentation != null &&
+                controller.presentation.main_view == this && controller.frozen;
+        }
+
+        internal bool vector_ready_for(int page, VectorBinding? binding) {
+            return vector_ready && !destroyed && get_mapped() && !disabled &&
+                current_slide_number == page && transition == null &&
+                vector_displayed_binding == binding;
+        }
+
+        /** Copy the composed state currently held by this view. */
+        internal Cairo.ImageSurface? snapshot() {
+            if (buffer == null) return null;
+            int width = buffer.get_width(), height = buffer.get_height();
+            var result = new Cairo.ImageSurface(Cairo.Format.RGB24, width, height);
+            var context = new Cairo.Context(result);
+            context.set_source_surface(buffer, 0, 0);
+            context.paint();
+            if (transition == null && vector_enabled && !notes_area && !disabled &&
+                vector_displayed_binding != null) {
+                vector_displayed_binding.draw(context, get_metadata(),
+                    vector_displayed_time, width, height, zoom_area);
+            }
+            return result;
+        }
 
         private bool vector_can_tick() {
             var playback = controller.vector_animation;
             bool frozen = controller.presentation != null &&
                 controller.presentation.main_view == this && controller.frozen;
-            return vector_enabled && !notes_area && !disabled && !frozen &&
+            return !destroyed && vector_enabled && !notes_area && !disabled && !frozen &&
+                transition == null && vector_ready &&
                 get_mapped() && playback != null && playback.playing &&
                 playback.page == current_slide_number;
         }
 
         private void vector_refresh() {
-            if (!vector_enabled) return;
+            if (!vector_enabled || destroyed) return;
+            if (transition_next != null) {
+                compose_into(transition_next, current_slide, current_slide_number);
+            }
             this.queue_draw();
             if (vector_can_tick()) {
                 if (vector_tick_id == 0) {
@@ -96,9 +133,13 @@ namespace pdfpc {
 
         private void draw_vector(Cairo.Context cr, int width, int height) {
             var playback = controller.vector_animation;
-            if (!vector_enabled || notes_area || disabled || playback == null || transition_tid != 0) return;
+            if (!vector_enabled || notes_area || disabled || playback == null || transition != null) return;
             var binding = playback.binding_for(current_slide_number);
-            if (binding == null) return;
+            if (binding == null) {
+                vector_displayed_binding = null;
+                vector_displayed_time = 0;
+                return;
+            }
             int64 sample_clock = GLib.get_monotonic_time();
             bool audience = controller.presentation != null && controller.presentation.main_view == this;
             if (vector_displayed_binding != binding) {
@@ -120,6 +161,76 @@ namespace pdfpc {
                     cpu_started < 0 || cpu_finished < 0 ? -1 : cpu_finished - cpu_started,
                     width, height, this.get_frame_clock(), cr.get_target().get_type(),
                     cr.get_group_target().get_type());
+            }
+        }
+
+        private void compose_into(Cairo.ImageSurface destination, Cairo.ImageSurface pdf, int page) {
+            var context = new Cairo.Context(destination);
+            context.set_source_surface(pdf, 0, 0);
+            context.paint();
+            var playback = controller.vector_animation;
+            if (!vector_enabled || notes_area || disabled || playback == null) return;
+            var binding = playback.binding_for(page);
+            if (binding == null) return;
+            double position = playback.page == page ? playback.time : 0;
+            binding.draw(context, get_metadata(), position,
+                destination.get_width(), destination.get_height(), zoom_area);
+        }
+
+        private void stop_transition_timer() {
+            if (transition_tid != 0) {
+                Source.remove(transition_tid);
+                transition_tid = 0;
+            }
+            transition_steps_queued = 0;
+        }
+
+        private void cancel_transition() {
+            stop_transition_timer();
+            transition = null;
+            transition_next = null;
+        }
+
+        private void vector_freeze_changed(bool frozen) {
+            if (frozen) {
+                stop_transition_timer();
+            } else if (current_slide != null && buffer != null &&
+                (current_slide.get_width() != buffer.get_width() ||
+                 current_slide.get_height() != buffer.get_height())) {
+                display(controller.current_slide_number, true, zoom_area);
+            }
+            vector_refresh();
+        }
+
+        private void view_unmapped() {
+            vector_ready = false;
+            if (transition != null) {
+                cancel_transition();
+                buffer = current_slide;
+                entering_slide_queued = true;
+            }
+            if (controller.vector_animation != null) {
+                controller.vector_animation.view_unavailable(this);
+            }
+            vector_refresh();
+        }
+
+        private void view_destroyed() {
+            destroyed = true;
+            vector_ready = false;
+            entering_slide_queued = false;
+            cancel_prerender();
+            cancel_transition();
+            if (vector_tick_id != 0) {
+                remove_tick_callback(vector_tick_id);
+                vector_tick_id = 0;
+            }
+            if (controller.vector_animation != null) {
+                controller.vector_animation.view_unavailable(this);
+            }
+            if (vector_changed_handler != 0) {
+                controller.disconnect(vector_changed_handler);
+                vector_changed_handler = 0;
             }
         }
 
@@ -319,10 +430,11 @@ namespace pdfpc {
             int gdk_scale_factor, bool user_slides) {
             this.renderer = renderer;
             this.controller = controller;
-            controller.vector_changed.connect(this.vector_refresh);
+            vector_changed_handler = controller.vector_changed.connect(this.vector_refresh);
             this.map.connect(this.vector_refresh);
-            this.unmap.connect(this.vector_refresh);
-            this.destroy.connect(this.cancel_prerender);
+            this.unmap.connect(this.view_unmapped);
+            this.destroy.connect(this.view_destroyed);
+            this.freeze_toggled.connect(this.vector_freeze_changed);
             this.gdk_scale = gdk_scale_factor;
             this.notes_area = notes_area;
             this.user_slides = user_slides;
@@ -406,7 +518,7 @@ namespace pdfpc {
          */
         public void display(int slide_number, bool force = false,
             PresentationController.ScaledRectangle? rect = null) {
-            if (this.n_slides == 0) {
+            if (destroyed || this.n_slides == 0) {
                 return;
             }
 
@@ -437,6 +549,12 @@ namespace pdfpc {
                     trans_slide_number = slide_number;
                 }
 
+                // The controller has already selected the next animation.
+                // Keep the binding and time last painted by this view.
+                var previous_slide = snapshot();
+                vector_ready = false;
+                entering_slide_queued = false;
+
                 // Notify all listeners
                 this.leaving_slide(this.current_slide_number, slide_number);
 
@@ -444,14 +562,7 @@ namespace pdfpc {
 
                 this.zoom_area = rect;
 
-                // Cancel any active transition timeout
-                if (this.transition_tid != 0) {
-                    GLib.Source.remove(this.transition_tid);
-                    this.transition_tid = 0;
-                }
-
-                // Save the previous slide for transition
-                var previous_slide = this.current_slide;
+                cancel_transition();
 
                 try {
                     if (this.current_slide_number < this.n_slides &&
@@ -480,17 +591,18 @@ namespace pdfpc {
                     return;
                 }
 
-                // The transition manager object
-                View.TransitionManager transman = null;
-
                 if (!this.disabled && this.transitions_enabled &&
-                    sequential_move && previous_slide != null) {
-                    transman = new View.TransitionManager(metadata,
-                        trans_slide_number, previous_slide, this.current_slide,
+                    sequential_move && previous_slide != null &&
+                    previous_slide.get_width() == width && previous_slide.get_height() == height) {
+                    transition_next = new Cairo.ImageSurface(Cairo.Format.RGB24, width, height);
+                    compose_into(transition_next, current_slide, current_slide_number);
+                    transition = new View.TransitionManager(metadata,
+                        trans_slide_number, previous_slide, transition_next,
                         trans_inverse);
                 }
 
-                if (transman == null || !transman.is_enabled) {
+                if (transition == null || !transition.is_enabled) {
+                    cancel_transition();
                     // Just the new slide
                     this.buffer = this.current_slide;
 
@@ -502,31 +614,9 @@ namespace pdfpc {
                 } else {
                     this.buffer = new Cairo.ImageSurface(Cairo.Format.RGB24,
                         width, height);
-                    Cairo.Context buffer_cr = new Cairo.Context(this.buffer);
-
-                    var delay = transman.frame_duration;
-                    this.transition_tid = Timeout.add(delay, () => {
-                            var inprogress = transman.advance();
-
-                            // Ensure no active clipping from the previous frame
-                            buffer_cr.reset_clip();
-                            transman.draw_frame(buffer_cr);
-
-                            if (!inprogress) {
-                                // Queue the signal _prior_ to the final draw()
-                                this.entering_slide_queued = true;
-                            }
-
-                            this.queue_draw();
-
-                            if (inprogress) {
-                                return true;
-                            } else {
-                                this.transition_tid = 0;
-                                // Stop the timer
-                                return false;
-                            }
-                        }, Priority.HIGH);
+                    transition.draw_frame(new Cairo.Context(this.buffer));
+                    // Start stepping after GTK paints this complete first frame.
+                    this.queue_draw();
                 }
             }
         }
@@ -536,9 +626,16 @@ namespace pdfpc {
          */
         public void invalidate() {
             this.cancel_prerender();
+            cancel_transition();
+            vector_ready = false;
+            entering_slide_queued = false;
             this.current_slide_number = -1;
             this.current_slide = null;
+            this.buffer = null;
             this.vector_displayed_binding = null;
+            if (controller.vector_animation != null) {
+                controller.vector_animation.view_unavailable(this);
+            }
             this.vector_refresh();
         }
 
@@ -560,22 +657,52 @@ namespace pdfpc {
          */
         protected override bool draw(Cairo.Context cr) {
             // not ready yet
-            if (this.buffer == null) {
+            if (destroyed || this.buffer == null) {
                 return true;
             }
 
             int width, height;
             this.get_pixel_dimensions(out width, out height);
+            bool frozen = audience_frozen();
             // Re-render the slide on resize events
             if (width  != this.buffer.get_width() ||
                 height != this.buffer.get_height()) {
+                if (frozen) {
+                    var held = new Cairo.ImageSurface(Cairo.Format.RGB24, width, height);
+                    var held_cr = new Cairo.Context(held);
+                    held_cr.scale((double) width/buffer.get_width(),
+                        (double) height/buffer.get_height());
+                    held_cr.set_source_surface(buffer, 0, 0);
+                    held_cr.paint();
+                    buffer = held;
+                } else {
+                cancel_transition();
+                vector_ready = false;
                 try {
-                    this.buffer =
+                    this.current_slide =
+                        this.disabled ? this.renderer.fade_to_black(width, height) :
                         this.renderer.render(this.current_slide_number,
                             this.notes_area, width, height,
                             false, false, this.zoom_area);
                 } catch (Renderer.RenderError e) {
                     return true;
+                }
+                this.buffer = this.current_slide;
+                this.entering_slide_queued = true;
+                }
+            }
+
+            if (transition != null && !frozen) {
+                while (transition_steps_queued > 0 && transition != null) {
+                    transition_steps_queued--;
+                    if (!transition.advance()) {
+                        cancel_transition();
+                        buffer = current_slide;
+                        entering_slide_queued = true;
+                    }
+                }
+                if (transition != null) {
+                    transition.draw_frame(new Cairo.Context(buffer));
                 }
             }
 
@@ -584,11 +711,30 @@ namespace pdfpc {
             cr.paint();
             draw_vector(cr, width, height);
 
-            if (this.entering_slide_queued) {
+            if (transition != null && transition_tid == 0 && !frozen) {
+                transition_tid = Timeout.add(transition.frame_duration, () => {
+                    transition_steps_queued++;
+                    queue_draw();
+                    return Source.CONTINUE;
+                }, Priority.HIGH);
+            }
+
+            int painted_page = current_slide_number;
+            var painted_binding = vector_displayed_binding;
+            bool became_ready = !vector_ready && transition == null && !frozen;
+            if (transition == null && !frozen) vector_ready = true;
+
+            if (this.entering_slide_queued && !frozen) {
                 this.entering_slide_queued = false;
                 // At this point, the transition to the new slide is over;
                 // notify the listeners
                 this.entering_slide(this.current_slide_number);
+            }
+
+            if (vector_ready && current_slide_number == painted_page &&
+                vector_displayed_binding == painted_binding && controller.vector_animation != null) {
+                controller.vector_animation.view_ready(this);
+                if (became_ready) vector_refresh();
             }
 
             // We are the only ones drawing on this context; skip everything else

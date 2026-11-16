@@ -57,6 +57,7 @@ namespace pdfpc {
         public double time { get; private set; default = 0; }
         public double speed { get; private set; default = 1; }
         public bool playing { get; private set; default = false; }
+        public bool waiting { get; private set; default = false; }
         public signal void started();
         private double target = 0;
         private double anchor_time = 0;
@@ -123,6 +124,7 @@ namespace pdfpc {
 
         public void reload() {
             playing = false;
+            waiting = false;
             deck = null;
             bindings.clear();
             binding = null;
@@ -189,6 +191,7 @@ namespace pdfpc {
                 return;
             }
             playing = false;
+            waiting = false;
             this.page = page;
             binding = binding_for(page);
             time = backwards && binding != null ? binding.scene.duration : 0;
@@ -206,11 +209,36 @@ namespace pdfpc {
                 return;
             }
             target = double.min(end, binding.scene.duration);
+            var view = primary_view();
+            if (view != null && !view.vector_ready_for(page, binding)) {
+                playing = false;
+                waiting = true;
+                changed("waiting-for-view");
+                return;
+            }
+            waiting = false;
             anchor_time = time;
             anchor_clock = GLib.get_monotonic_time();
             playing = true;
             started();
             changed("play");
+        }
+
+        private View.Pdf? primary_view() {
+            if (controller.presentation != null) return controller.presentation.main_view;
+            if (controller.presenter != null) return controller.presenter.main_view;
+            return null;
+        }
+
+        internal void view_ready(View.Pdf view) {
+            if (waiting && view == primary_view() && view.vector_ready_for(page, binding)) {
+                waiting = false;
+                run_to(target);
+            }
+        }
+
+        internal void view_unavailable(View.Pdf view) {
+            if (view == primary_view()) pause();
         }
 
         public double time_at(int64 clock_time) {
@@ -235,11 +263,12 @@ namespace pdfpc {
         }
 
         public void pause() {
-            if (!playing) {
+            if (!playing && !waiting) {
                 return;
             }
             advance(GLib.get_monotonic_time());
             playing = false;
+            waiting = false;
             changed("pause");
         }
 
@@ -248,6 +277,7 @@ namespace pdfpc {
                 return;
             }
             playing = false;
+            waiting = false;
             time = double.min(binding.scene.duration, double.max(0, position));
             target = time;
             changed("seek");
@@ -257,7 +287,7 @@ namespace pdfpc {
             if (!can_play()) {
                 return false;
             }
-            if (playing) {
+            if (playing || waiting) {
                 next_checkpoint();
                 return true;
             }
@@ -304,7 +334,7 @@ namespace pdfpc {
         }
 
         public void toggle() {
-            if (playing) {
+            if (playing || waiting) {
                 pause();
             } else {
                 if (!can_play()) return;
@@ -347,7 +377,8 @@ namespace pdfpc {
             var scene = binding.scene;
             int current = scene.checkpoint_at(time);
             return "%d/%d  %s  (%s, %g×)".printf(current + 1, scene.checkpoints.length,
-                scene.checkpoints[current].label, playing ? "playing" : "paused", speed);
+                scene.checkpoints[current].label,
+                waiting ? "waiting for slide" : playing ? "playing" : "paused", speed);
         }
 
         private unowned VectorTraceWriter event_builder(string kind) {

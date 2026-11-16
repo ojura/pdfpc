@@ -130,7 +130,7 @@ namespace pdfpc {
 
             if (this.transition != null) {
                 this.nframes =
-                    (uint) Math.ceil(this.transition.duration_real*this.fps);
+                    uint.max(1, (uint) Math.ceil(this.transition.duration_real*this.fps));
             }
         }
 
@@ -148,7 +148,7 @@ namespace pdfpc {
         public uint frame_duration {
             get {
                 if (this.is_enabled) {
-                    return (uint) (1000/this.fps);
+                    return uint.max(1, (uint) (1000/this.fps));
                 } else {
                     return 0;
                 }

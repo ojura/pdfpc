@@ -58,6 +58,8 @@ if(PYTHONINTERP_FOUND)
     add_test(NAME vector-trace-writer
         COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_trace_writer.py
             $<TARGET_FILE:vector-trace-writer-probe>)
+    add_test(NAME vector-trace-metrics
+        COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_trace_metrics.py)
     foreach(variant IN ITEMS native windows)
         set(resource_arguments)
         if(variant STREQUAL "windows")
@@ -77,12 +79,23 @@ if(PYTHONINTERP_FOUND)
         add_test(NAME vector-renderer
             COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/vector/test_renderer.py
                 $<TARGET_FILE:vector-probe> --output ${CMAKE_BINARY_DIR}/tests/vector/renderer)
+        find_program(VECTOR_PDFTOPPM pdftoppm)
+        if(VECTOR_PDFTOPPM)
+            add_test(NAME vector-example
+                COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_example.py
+                    $<TARGET_FILE:vector-probe> --output ${CMAKE_BINARY_DIR}/tests/vector/example)
+        endif()
         find_program(VECTOR_XVFB Xvfb)
         find_program(VECTOR_XDOTOOL xdotool)
         find_program(VECTOR_DBUS_RUN dbus-run-session)
         find_program(VECTOR_DBUS_DAEMON dbus-daemon)
         find_program(VECTOR_IMAGE_IMPORT import)
         if(VECTOR_XVFB AND VECTOR_DBUS_DAEMON AND UNIX)
+            add_test(NAME vector-transitions
+                COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_transitions.py
+                    $<TARGET_FILE:vector-transition-probe>
+                    --output ${CMAKE_BINARY_DIR}/tests/vector/transitions)
+            set_tests_properties(vector-transitions PROPERTIES TIMEOUT 120)
             add_test(NAME vector-controller
                 COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_controller.py
                     $<TARGET_FILE:vector-controller-probe>
