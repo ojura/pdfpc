@@ -41,7 +41,8 @@ class ControllerTests(unittest.TestCase):
         environment = {**os.environ, "GDK_BACKEND": "x11", "NO_AT_BRIDGE": "1",
                        "GIO_USE_VFS": "local", "XDG_CONFIG_HOME": str(self.directory / "config"),
                        "XDG_CACHE_HOME": str(self.directory / "cache")}
-        for name in ("PDFPC_VECTOR_MANIFEST", "PDFPC_VECTOR_SPEED", "PDFPC_VECTOR_TRACE"):
+        for name in ("PDFPC_VECTOR_MANIFEST", "PDFPC_VECTOR_SPEED", "PDFPC_VECTOR_TRACE",
+                     "PDFPC_CONFIG_DIR", "PDFPC_DATA_DIR"):
             environment.pop(name, None)
         return environment
 
@@ -63,6 +64,121 @@ class ControllerTests(unittest.TestCase):
     def test_blanked_play_keeps_paused_timer(self): self.run_case("blocked-paused")
     def test_presenter_pause_indicator_tracks_animation_resume(self):
         self.run_case("presenter-resume", timed=False)
+
+    def inspect_bindings(self, *statements):
+        with PrivateGuiSession(self.directory / self.id().rsplit(".", 1)[-1],
+                               self.environment()) as session:
+            result = session.run([PROBE, str(self.untimed), "bindings", *statements])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS bindings", result.stdout)
+        report = json.loads(next(line[len("BINDINGS "):]
+                                 for line in result.stdout.splitlines()
+                                 if line.startswith("BINDINGS ")))
+        for name in ("bindings", "descriptions"):
+            entries = report[name]
+            self.assertEqual(len(entries) % 2, 0)
+            report[name] = dict(zip(entries[::2], entries[1::2]))
+        self.assertEqual(len(report["buttons"]), 4)
+        self.assertTrue(all(button["mapped"] for button in report["buttons"]), report)
+        report["stderr"] = result.stderr
+        (OUTPUT / (self.id().rsplit(".", 1)[-1] + ".json")).write_text(
+            json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        return report
+
+    def assert_vector_tooltips(self, report):
+        actions = ("vectorRestart", "vectorPreviousCheckpoint", "vectorToggle",
+                   "vectorNextCheckpoint")
+        for action, button in zip(actions, report["buttons"]):
+            with self.subTest(action=action):
+                bindings = report["bindings"].get(action, "")
+                expected = report["descriptions"][action]
+                if bindings:
+                    expected += " (" + bindings + ")"
+                self.assertEqual(button["tooltip"], expected)
+                self.assertTrue(button["has_tooltip"])
+
+    def test_binding_display_retains_every_modifier(self):
+        report = self.inspect_bindings("unbind_all", "unmouse_all",
+            "bind C+Right vectorNextCheckpoint", "bind M+Left vectorPreviousCheckpoint",
+            "bind S+Home vectorRestart", "bind CM+Up vectorPlayAll",
+            "bind CS+Down vectorFinish", "bind MS+End vectorToggle",
+            "bind CMS+Insert vectorStatus")
+        self.assertEqual(report["bindings"], {
+            "vectorNextCheckpoint": "Ctrl+Right", "vectorPreviousCheckpoint": "Meta+Left",
+            "vectorRestart": "Shift+Home", "vectorPlayAll": "Ctrl+Meta+Up",
+            "vectorFinish": "Ctrl+Shift+Down", "vectorToggle": "Meta+Shift+End",
+            "vectorStatus": "Ctrl+Meta+Shift+Insert",
+        })
+
+    def test_binding_display_keeps_shifted_letters_and_alt_alias(self):
+        report = self.inspect_bindings("unbind_all", "unmouse_all",
+            "bind X vectorRestart", "bind CS+y vectorToggle",
+            "bind CA+Left vectorPreviousCheckpoint", "bind a vectorNextCheckpoint")
+        self.assertEqual(report["bindings"], {
+            "vectorRestart": "Shift+x", "vectorToggle": "Ctrl+Shift+y",
+            "vectorPreviousCheckpoint": "Ctrl+Meta+Left", "vectorNextCheckpoint": "a",
+        })
+
+    def test_mouse_binding_display_uses_its_own_parameters(self):
+        report = self.inspect_bindings("unbind_all", "unmouse_all",
+            "bind a switchMode pen", "mouse 97 switchMode pointer",
+            "mouse CS+1 windowed presentation", "mouse 2 setPenColor red")
+        self.assertCountEqual(report["bindings"]["switchMode"].split(", "),
+                              ("a [pen]", "Mouse_97 [pointer]"))
+        self.assertEqual(report["bindings"]["windowed"], "Ctrl+Shift+Mouse_1 [presentation]")
+        self.assertEqual(report["bindings"]["setPenColor"], "Mouse_2 [red]")
+
+    def test_parsed_parameters_follow_registered_action_types(self):
+        report = self.inspect_bindings("unbind_all", "unmouse_all",
+            "mouse 1 gotoPage 3", "bind g gotoPage 2", "bind CM+m movePointer 0.1,0.2")
+        self.assertCountEqual(report["bindings"].get("gotoPage", "").split(", "),
+                              ("g [2]", "Mouse_1 [3]"))
+        self.assertEqual(report["bindings"].get("movePointer"), "Ctrl+Meta+m [0.1,0.2]")
+        self.assertNotIn("expects a parameter", report["stderr"])
+        self.assertNotIn("No argument is expected", report["stderr"])
+
+    def test_invalid_binding_does_not_replace_a_valid_binding(self):
+        report = self.inspect_bindings("unbind_all", "unmouse_all",
+            "bind a switchMode pen", "bind a switchMode",
+            "mouse 1 windowed presenter", "mouse 1 windowed",
+            "bind x vectorRestart", "bind x vectorToggle unexpected",
+            "mouse 2 vectorNextCheckpoint", "mouse 2 vectorToggle unexpected",
+            "bind x absentAction", "mouse 2 absentAction")
+        self.assertEqual(report["bindings"], {
+            "switchMode": "a [pen]", "windowed": "Mouse_1 [presenter]",
+            "vectorRestart": "x", "vectorNextCheckpoint": "Mouse_2",
+        })
+        self.assertIn("Action switchMode expects a parameter", report["stderr"])
+        self.assertIn("Action windowed expects a parameter", report["stderr"])
+        self.assertIn("does not expect a parameter", report["stderr"])
+        self.assertIn("Unknown action absentAction", report["stderr"])
+
+    def test_default_presenter_tooltips_use_action_descriptions(self):
+        report = self.inspect_bindings()
+        self.assertEqual(report["bindings"]["vectorNextCheckpoint"], "Ctrl+Right")
+        self.assert_vector_tooltips(report)
+
+    def test_remapped_presenter_tooltips_follow_actual_bindings(self):
+        report = self.inspect_bindings("unbind_all", "unmouse_all",
+            "bind x vectorRestart", "bind A+Left vectorPreviousCheckpoint",
+            "mouse 1 vectorToggle", "bind CMS+Right vectorNextCheckpoint",
+            "mouse S+3 vectorNextCheckpoint", "bind r quit")
+        self.assertCountEqual(report["bindings"]["vectorNextCheckpoint"].split(", "),
+                              ("Ctrl+Meta+Shift+Right", "Shift+Mouse_3"))
+        self.assertEqual(report["bindings"]["vectorToggle"], "Mouse_1")
+        self.assert_vector_tooltips(report)
+
+    def test_unbound_presenter_actions_keep_description_only(self):
+        report = self.inspect_bindings("unbind_all", "unmouse_all")
+        self.assertEqual(report["bindings"], {})
+        self.assert_vector_tooltips(report)
+
+    def test_disabled_tooltips_apply_to_vector_controls_and_status(self):
+        report = self.inspect_bindings("option disable-tooltips true")
+        for button in report["buttons"]:
+            self.assertIsNone(button["tooltip"])
+            self.assertFalse(button["has_tooltip"])
+        self.assertIsNone(report["status_tooltip"])
 
     def test_timeout_closes_display_bus_and_probe(self):
         session = PrivateGuiSession(self.directory / "timeout", self.environment())

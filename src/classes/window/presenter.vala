@@ -98,9 +98,11 @@ namespace pdfpc.Window {
         protected Gtk.Label vector_status;
         protected Gtk.Button vector_toggle_button;
 
-        private Gtk.Button vector_button(string icon, string tooltip, string action) {
+        private Gtk.Button vector_button(string icon, string action) {
             var button = new Gtk.Button.from_icon_name(icon, Gtk.IconSize.SMALL_TOOLBAR);
-            button.tooltip_text = tooltip;
+            if (!Options.disable_tooltips) {
+                button.tooltip_text = controller.get_action_tooltip(action);
+            }
             button.can_focus = false;
             button.clicked.connect(() => controller.trigger_action(action, null));
             return button;
@@ -111,7 +113,7 @@ namespace pdfpc.Window {
             bool active = playback != null && playback.binding != null;
             vector_controls.visible = active;
             vector_status.label = active ? playback.status_text() : "";
-            vector_status.tooltip_text = vector_status.label;
+            vector_status.tooltip_text = Options.disable_tooltips ? null : vector_status.label;
             vector_toggle_button.sensitive = active && playback.can_play();
             vector_toggle_button.image = new Gtk.Image.from_icon_name(active && playback.playing ?
                 "media-playback-pause-symbolic" : "media-playback-start-symbolic", Gtk.IconSize.SMALL_TOOLBAR);
@@ -639,14 +641,14 @@ namespace pdfpc.Window {
             this.vector_controls = new Gtk.Box(Gtk.Orientation.HORIZONTAL, 4);
             this.vector_controls.margin = 3;
             this.vector_controls.pack_start(vector_button("view-refresh-symbolic",
-                "Restart derivation (r)", "vectorRestart"), false, false);
+                "vectorRestart"), false, false);
             this.vector_controls.pack_start(vector_button("media-skip-backward-symbolic",
-                "Previous checkpoint (Ctrl+Left)", "vectorPreviousCheckpoint"), false, false);
+                "vectorPreviousCheckpoint"), false, false);
             this.vector_toggle_button = vector_button("media-playback-start-symbolic",
-                "Play or pause (a)", "vectorToggle");
+                "vectorToggle");
             this.vector_controls.pack_start(this.vector_toggle_button, false, false);
             this.vector_controls.pack_start(vector_button("media-skip-forward-symbolic",
-                "Next checkpoint (Ctrl+Right)", "vectorNextCheckpoint"), false, false);
+                "vectorNextCheckpoint"), false, false);
             this.vector_status = new Gtk.Label("");
             this.vector_status.ellipsize = Pango.EllipsizeMode.END;
             this.vector_status.xalign = 0;

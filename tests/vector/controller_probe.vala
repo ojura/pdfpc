@@ -26,14 +26,66 @@ class ProbePresenter : pdfpc.Window.Presenter {
     public bool pause_indicator_mapped {
         get { return pause_icon != null && pause_icon.get_mapped(); }
     }
+
+    public void report_vector_buttons(Json.Builder report) throws CheckFailure {
+        report.set_member_name("buttons");
+        report.begin_array();
+        int count = 0;
+        foreach (var child in vector_controls.get_children()) {
+            var button = child as Gtk.Button;
+            if (button == null) continue;
+            count++;
+            report.begin_object();
+            report.set_member_name("tooltip");
+            if (button.tooltip_text == null) report.add_null_value();
+            else report.add_string_value(button.tooltip_text);
+            report.set_member_name("has_tooltip");
+            report.add_boolean_value(button.has_tooltip);
+            report.set_member_name("mapped");
+            report.add_boolean_value(button.get_mapped());
+            report.end_object();
+        }
+        report.end_array();
+        check(count == 4, "Inspect all four actual vector controls");
+        report.set_member_name("status_tooltip");
+        if (vector_status.tooltip_text == null) report.add_null_value();
+        else report.add_string_value(vector_status.tooltip_text);
+    }
+
+    public void check_vector_button_actions() throws CheckFailure {
+        Gtk.Button[] buttons = {};
+        foreach (var child in vector_controls.get_children()) {
+            if (child is Gtk.Button) buttons += (Gtk.Button) child;
+        }
+        var animation = controller.vector_animation;
+        animation.seek(animation.binding.scene.duration);
+        buttons[0].clicked();
+        check(animation.time == 0, "The actual restart button must return to the initial state");
+        buttons[3].clicked();
+        check(animation.time > 0 && !animation.playing,
+            "The actual next-checkpoint button must seek without playing");
+        buttons[1].clicked();
+        check(animation.time == 0, "The actual previous-checkpoint button must seek backward");
+        buttons[2].clicked();
+        var deadline = GLib.get_monotonic_time() + 2000000;
+        while (animation.waiting && GLib.get_monotonic_time() < deadline) pump(5);
+        check(animation.playing, "The actual toggle button must start playback");
+        buttons[2].clicked();
+        check(!animation.playing, "The actual toggle button must pause playback");
+    }
 }
 
 int main(string[] args) {
     Gtk.init(ref args);
-    if (args.length != 3) return 2;
+    if (args.length < 3) return 2;
     new pdfpc.Options();
     pdfpc.Options.no_install = true;
     pdfpc.Options.prerender_slides = 0;
+    if (args[2] == "bindings") {
+        var config = new pdfpc.ConfigFileReader();
+        config.readConfig(pdfpc.Resources.resolve_system_config());
+        for (int i = 3; i < args.length; i++) config.parseStatement(args[i]);
+    }
     var controller = new pdfpc.PresentationController();
     controller.metadata = new pdfpc.Metadata.Pdf(args[1]);
     var animation = controller.vector_animation;
@@ -41,6 +93,30 @@ int main(string[] args) {
         check(animation.binding != null, "The actual PDF must bind its first animated page");
         check(!controller.is_running() && !controller.is_paused(), "Initial timer must be stopped");
         switch (args[2]) {
+        case "bindings":
+            var presenter = new ProbePresenter(controller);
+            controller.presenter = presenter;
+            presenter.show_all();
+            pump(200);
+            presenter.update();
+            var report = new Json.Builder();
+            report.begin_object();
+            report.set_member_name("bindings");
+            report.begin_array();
+            foreach (var value in controller.get_action_bindings()) report.add_string_value(value);
+            report.end_array();
+            report.set_member_name("descriptions");
+            report.begin_array();
+            foreach (var value in controller.get_action_descriptions()) report.add_string_value(value);
+            report.end_array();
+            presenter.report_vector_buttons(report);
+            report.end_object();
+            var generator = new Json.Generator();
+            generator.set_root(report.get_root());
+            print("BINDINGS %s\n", generator.to_data(null));
+            presenter.check_vector_button_actions();
+            presenter.hide();
+            break;
         case "next-start":
             controller.next_page();
             check(animation.playing && controller.current_slide_number == 0,

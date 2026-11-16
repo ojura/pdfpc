@@ -1225,34 +1225,34 @@ namespace pdfpc {
         protected void add_actions() {
             add_action("vectorToggle", () => {
                 if (vector_animation != null) vector_animation.toggle();
-            }, "Play or pause the current vector derivation");
+            }, "Play or pause the current vector animation");
             add_action("vectorNextCheckpoint", () => {
                 if (vector_animation != null) vector_animation.next_checkpoint();
-            }, "Skip to the next vector checkpoint");
+            }, "Show the next animation checkpoint");
             add_action("vectorPreviousCheckpoint", () => {
                 if (vector_animation != null) vector_animation.previous_checkpoint();
-            }, "Skip to the previous vector checkpoint");
+            }, "Show the previous animation checkpoint");
             add_action("vectorRestart", () => {
                 if (vector_animation != null) vector_animation.seek(0);
-            }, "Restart the current vector derivation");
+            }, "Return the current vector animation to its initial state");
             add_action("vectorFinish", () => {
                 if (vector_animation != null && vector_animation.binding != null)
                     vector_animation.seek(vector_animation.binding.scene.duration);
-            }, "Show the final derivation state");
+            }, "Show the final animation state");
             add_action("vectorPlayAll", () => {
                 if (vector_animation != null) vector_animation.play_all();
-            }, "Play the complete derivation continuously");
+            }, "Play the complete animation continuously");
             add_action("vectorSlower", () => {
                 if (vector_animation != null) vector_animation.change_speed(0.5);
-            }, "Halve derivation playback speed");
+            }, "Halve animation playback speed");
             add_action("vectorFaster", () => {
                 if (vector_animation != null) vector_animation.change_speed(2);
-            }, "Double derivation playback speed");
+            }, "Double animation playback speed");
             add_action("vectorStatus", () => {
                 if (vector_animation != null) vector_animation.trace_state("status", true);
             }, "Print current vector playback state");
             add_action("next", this.next_page,
-                "Go to the next slide");
+                "Advance to the next animation checkpoint or slide");
             add_action("next10", this.jump10,
                 "Jump 10 slides forward");
             add_action("lastOverlay", this.jump_to_last_overlay,
@@ -1260,7 +1260,7 @@ namespace pdfpc {
             add_action("nextOverlay", this.next_user_page,
                 "Jump forward outside of the current overlay");
             add_action("prev", this.previous_page,
-                "Go to the previous slide");
+                "Show the previous animation checkpoint or slide");
             add_action("prev10", this.back10,
                 "Jump 10 slides back");
             add_action("firstOverlay", this.jump_to_first_overlay,
@@ -1423,13 +1423,13 @@ namespace pdfpc {
         private string get_bindstr(KeyDef keydef, bool is_mouse) {
             string bindstr = "", keystr, modstr = "";
             if ((keydef.modMask & Gdk.ModifierType.CONTROL_MASK) != 0) {
-                modstr = "Ctrl+";
+                modstr += "Ctrl+";
             }
             if ((keydef.modMask & Gdk.ModifierType.META_MASK) != 0) {
-                modstr = "Meta+";
+                modstr += "Meta+";
             }
             if ((keydef.modMask & Gdk.ModifierType.SHIFT_MASK) != 0) {
-                modstr = "Shift+";
+                modstr += "Shift+";
             }
             if (is_mouse) {
                 keystr = "Mouse_%u".printf(keydef.keycode);
@@ -1445,48 +1445,49 @@ namespace pdfpc {
             return bindstr;
         }
 
+        private string describe_binding(KeyDef keydef, bool is_mouse,
+            ActionAndParameter action) {
+            var label = get_bindstr(keydef, is_mouse);
+            if (action.parameter != null) {
+                label += " [" + action.parameter.get_string() + "]";
+            }
+            return label;
+        }
+
+        private string action_bindings(string name) {
+            string[] labels = {};
+            foreach (var entry in this.keyBindings.entries) {
+                if (entry.value.name == name) {
+                    labels += describe_binding(entry.key, false, entry.value);
+                }
+            }
+            foreach (var entry in this.mouseBindings.entries) {
+                if (entry.value.name == name) {
+                    labels += describe_binding(entry.key, true, entry.value);
+                }
+            }
+            return string.joinv(", ", labels);
+        }
+
+        /** Describe an action with its configured keyboard and mouse bindings. */
+        public string? get_action_tooltip(string name) {
+            foreach (var entry in this.action_descriptions) {
+                if (entry.name == name) {
+                    var bindings = action_bindings(name);
+                    return bindings == "" ? entry.description :
+                        entry.description + " (" + bindings + ")";
+                }
+            }
+            return null;
+        }
+
         /**
          * Get an array with all action names & their bindings
          */
         public string[] get_action_bindings() {
             string[] retval = {};
-
             foreach (var entry in this.action_descriptions) {
-                var bindstr = "";
-                // Loop over the key bindings
-                foreach (var bentry in this.keyBindings.entries) {
-                    if (bentry.value.name != entry.name) {
-                        continue;
-                    }
-                    var keydef = bentry.key;
-
-                    if (bindstr != "") {
-                        bindstr += ", ";
-                    }
-                    bindstr += get_bindstr(keydef, false);
-
-                    var action = this.keyBindings.get(keydef);
-                    if (action != null && action.parameter != null) {
-                        bindstr += " [" + action.parameter.get_string() + "]";
-                    }
-                }
-                // Same for the mouse bindings
-                foreach (var bentry in this.mouseBindings.entries) {
-                    if (bentry.value.name != entry.name) {
-                        continue;
-                    }
-                    var keydef = bentry.key;
-
-                    if (bindstr != "") {
-                        bindstr += ", ";
-                    }
-                    bindstr += get_bindstr(keydef, true);
-
-                    var action = this.keyBindings.get(keydef);
-                    if (action != null && action.parameter != null) {
-                        bindstr += " [" + action.parameter.get_string() + "]";
-                    }
-                }
+                var bindstr = action_bindings(entry.name);
                 if (bindstr != "") {
                     retval += entry.name;
                     retval += bindstr;
@@ -1515,15 +1516,16 @@ namespace pdfpc {
                     if (parameter != null) {
                         GLib.printerr("Action %s does not expect a parameter\n",
                             action_name);
+                        return;
                     }
                 } else if (parameter == null) {
                     GLib.printerr("Action %s expects a parameter\n",
                         action_name);
-                } else {
-                    assert(
-                        parameter.get_type().equal(GLib.VariantType.STRING) &&
-                        expected_type.equal(GLib.VariantType.STRING)
-                    );
+                    return;
+                } else if (!parameter.is_of_type(expected_type)) {
+                    GLib.printerr("Action %s expects a parameter of type %s\n",
+                        action_name, expected_type.dup_string());
+                    return;
                 }
                 Gee.HashMap<KeyDef, ActionAndParameter> bindings;
                 if (is_mouse) {

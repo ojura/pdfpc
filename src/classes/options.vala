@@ -341,23 +341,7 @@ namespace pdfpc {
             public uint keyCode;
             public uint modMask;
             public string actionName;
-
-            private string? _actionArg;
-            public string? actionArg {
-                get {
-                    return _actionArg;
-                }
-            }
-
-            public void setActionArg(string? actionArg) throws ConfigFileError {
-                if (this.actionName != "setPenColor" &&
-                    this.actionName != "switchMode"  &&
-                    this.actionName != "windowed") {
-                    throw new ConfigFileError.INVALID_BIND("No argument is expected");
-                }
-
-                this._actionArg = actionArg;
-            }
+            public string? actionArg;
         }
 
         /**

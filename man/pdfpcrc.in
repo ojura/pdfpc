@@ -28,8 +28,8 @@ Unbind the given key
 .B unbind_all
 Clear all the key bindings
 .TP
-.B mouse <button> <action>
-Bind a mouse button to an action
+.B mouse <button> <action> [<arg>]
+Bind a mouse button to an action, passing an argument when the action requires one
 .TP
 .B unmouse <button>
 Unbind a mouse button
@@ -40,8 +40,9 @@ Clear all the mouse bindings
 .PP
 Key names can be obtained with the help of the \fBxev\fR(1) utility. Note that
 names are case sensitive. Key combinations with modifiers can be specified in
-the form <mod>+<key>, where <mod> is one of S (for shift), C (for control) and
-A/M (for Alt/Meta).
+the form <mod>+<key>, where <mod> combines S (Shift), C (Control) and
+A/M (Alt/Meta). For example, CS+Right means Control+Shift+Right.
+The same modifiers apply to mouse bindings, such as CS+1.
 
 .PP
 A shorthand for specifying key combinations constituting shift and an
@@ -52,6 +53,12 @@ alphabetic character. For example, S+r and R are equivalent.
 A list of all possible actions can be obtained via the \fB\-L\fR command line
 option of \fBpdfpc\fR(1). Use the \fB\-B\fR command line option to list the
 action bindings defined.
+
+.PP
+Bindings are checked against the registered action's argument type. A missing
+or unexpected argument leaves any previous binding for that key or button intact.
+Presenter animation-button hints show the configured bindings; an unbound action
+shows only its description.
 
 .PP
 Vector animation actions are \fBvectorToggle\fR, \fBvectorPlayAll\fR,
@@ -118,7 +125,8 @@ it is supported by the hardware (bool, Default is false).
 Disable scrolling events on the presenter window (bool, Default is false).
 .TP
 .BI disable-tooltips
-Disable tooltips for the toolbox (bool, Default is false).
+Disable tooltips for the toolbox and vector animation controls, including the
+animation status label (bool, Default is false).
 .TP
 .BI enable-auto-srt-load
 Try loading video subtitle files automatically. For each video media, pdfpc will
