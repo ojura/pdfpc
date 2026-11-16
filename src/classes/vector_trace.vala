@@ -106,7 +106,9 @@ namespace pdfpc {
         private bool flush_trace() {
             if (trace_stream == null) return false;
             if (trace_buffer.len == 0) return true;
-            if (trace_stream.puts(trace_buffer.str) < 0 || trace_stream.flush() != 0) {
+            // Vala 0.48 binds puts() as void; ferror also reports write failure.
+            trace_stream.puts(trace_buffer.str);
+            if (trace_stream.error() != 0 || trace_stream.flush() != 0) {
                 int error_number = Posix.errno;
                 // Drop the failed sink and its collector, not lecture state.
                 // Keep the event writer alive for an explicit stdout status.

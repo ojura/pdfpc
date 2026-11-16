@@ -21,6 +21,25 @@ permissions:
   contents: read
 
 jobs:
+  minimum-vala:
+    name: Build with the supported Vala 0.48 baseline
+    runs-on: ubuntu-24.04
+    container: ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214
+    timeout-minutes: 15
+    steps:
+      - name: Install the baseline compiler and viewer dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates git build-essential cmake ninja-build valac pkg-config libgtk-3-dev librsvg2-common libpoppler-glib-dev libgee-0.8-dev libjson-glib-dev
+          valac --version | grep -E '^Vala 0\.48\.'
+      - uses: actions/checkout@v4
+      - name: Compile the production viewer with the minimum compiler
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=OFF -DMOVIES=OFF -DMDVIEW=OFF -DREST=OFF
+          cmake --build build --parallel 2
+
   native-vector:
     runs-on: ubuntu-24.04
     steps:
