@@ -54,7 +54,7 @@ jobs:
     - name: requirements
       run: |
         sudo apt update
-        sudo apt -y install cmake valac libunwind-dev libgee-0.8-dev libpoppler-glib-dev libgtk-3-dev libjson-glib-dev ${{ matrix.movies_packages }} ${{ matrix.mdview_packages }} ${{ matrix.rest_packages }}
+        sudo apt -y install cmake valac libunwind-dev libgee-0.8-dev libpoppler-glib-dev libgtk-3-dev librsvg2-common libjson-glib-dev ${{ matrix.movies_packages }} ${{ matrix.mdview_packages }} ${{ matrix.rest_packages }}
 
     - name: Configure CMake
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.

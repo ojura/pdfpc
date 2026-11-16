@@ -109,6 +109,7 @@ In order to compile and run pdfpc, the following requirements need to be met:
 - cmake >= 3.7
 - vala  >= 0.48
 - gtk+  >= 3.22
+- GdkPixbuf SVG loader for the interface icons (provided by librsvg)
 - gee   >= 0.8
 - poppler >= 0.8 with glib bindings
 - pangocairo
@@ -121,11 +122,11 @@ In order to compile and run pdfpc, the following requirements need to be met:
 
 E.g., on Ubuntu 22.04 onward, you can install these dependencies with::
 
-    sudo apt-get install cmake valac libgee-0.8-dev libpoppler-glib-dev libgtk-3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libjson-glib-dev libmarkdown2-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libqrencode-dev gstreamer1.0-gtk3
+    sudo apt-get install cmake valac libgee-0.8-dev libpoppler-glib-dev libgtk-3-dev librsvg2-common libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libjson-glib-dev libmarkdown2-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libqrencode-dev gstreamer1.0-gtk3
 
-(the last one is a run-time dependence). You should also consider installing all
-plugins to support required video formats; chances are they are already present
-through dependencies of ``ubuntu-desktop``.
+``librsvg2-common`` provides the runtime SVG loader for the interface icons;
+``gstreamer1.0-gtk3`` provides the GTK movie-playback plugin. Install additional
+GStreamer plugins for the video formats you use.
 
 On macOS with Homebrew, the easiest way is to install all dependencies of the
 pdfpc package without pdfpc itself::
