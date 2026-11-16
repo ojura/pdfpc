@@ -33,20 +33,6 @@ namespace pdfpc {
         }
     }
 
-    private class VectorTraceClock : Object {
-        public Gdk.FrameClock clock;
-        public int id;
-        public string view;
-        public int64 last_frame_counter = -1;
-        public Gee.ArrayList<int64?> pending = new Gee.ArrayList<int64?>();
-
-        public VectorTraceClock(Gdk.FrameClock clock, int id, string view) {
-            this.clock = clock;
-            this.id = id;
-            this.view = view;
-        }
-    }
-
     public class VectorPlayback : Object {
         public const string URI_PREFIX = "pdfpc-vector:";
         private weak PresentationController controller;
@@ -62,31 +48,16 @@ namespace pdfpc {
         private double target = 0;
         private double anchor_time = 0;
         private int64 anchor_clock = 0;
-        private FileStream? trace_stream;
-        private StringBuilder trace_buffer = new StringBuilder();
-        // GTK-thread producers complete each event synchronously before reuse.
-        private VectorTraceWriter? trace_writer;
-        private Gee.HashMap<Gdk.FrameClock, VectorTraceClock> trace_clocks =
-            new Gee.HashMap<Gdk.FrameClock, VectorTraceClock>();
-        private uint trace_drain_id = 0;
-        private int64 trace_drain_until = 0;
-        private int64 last_frame_recorded_us = 0;
-        private string trace_display_backend = "unknown";
+        private VectorTrace diagnostics;
 
-        public bool tracing_enabled { get { return trace_stream != null; } }
+        internal int64 playback_anchor_clock { get { return anchor_clock; } }
+        internal double playback_anchor_time { get { return anchor_time; } }
+        internal double playback_target { get { return target; } }
+        public bool tracing_enabled { get { return diagnostics.enabled; } }
 
         public VectorPlayback(PresentationController controller) {
             this.controller = controller;
-            string? trace_filename = Environment.get_variable("PDFPC_VECTOR_TRACE");
-            if (trace_filename != null && trace_filename != "") {
-                trace_stream = FileStream.open(trace_filename, "a");
-                if (trace_stream == null) {
-                    printerr("Cannot open vector trace: %s\n", trace_filename);
-                } else {
-                    var display = Gdk.Display.get_default();
-                    if (display != null) trace_display_backend = display.get_type().name();
-                }
-            }
+            diagnostics = new VectorTrace(this);
             string? speed_text = Environment.get_variable("PDFPC_VECTOR_SPEED");
             double requested_speed = 1;
             if (speed_text != null && double.try_parse(speed_text, out requested_speed) &&
@@ -96,27 +67,7 @@ namespace pdfpc {
             reload();
         }
 
-        public void close_trace() {
-            if (trace_stream == null) return;
-            if (trace_drain_id != 0) {
-                Source.remove(trace_drain_id);
-                trace_drain_id = 0;
-            }
-            int pending = 0;
-            foreach (var trace in trace_clocks.values) {
-                if (trace.pending.size == 0) continue;
-                unowned VectorTraceWriter builder = event_builder("timing");
-                builder.add_string("view", trace.view);
-                append_completed_timings(builder, trace);
-                write_trace(builder);
-                pending += trace.pending.size;
-            }
-            unowned VectorTraceWriter builder = event_builder("trace-closed");
-            builder.add_int("pending_frames", pending);
-            builder.add_int("last_frame_recorded_us", last_frame_recorded_us);
-            write_trace(builder, false, true);
-            trace_stream = null;
-        }
+        public void close_trace() { diagnostics.close(); }
 
         ~VectorPlayback() {
             close_trace();
@@ -381,168 +332,22 @@ namespace pdfpc {
                 waiting ? "waiting for slide" : playing ? "playing" : "paused", speed);
         }
 
-        private unowned VectorTraceWriter event_builder(string kind) {
-            if (trace_writer == null) trace_writer = new VectorTraceWriter();
-            unowned VectorTraceWriter builder = trace_writer;
-            builder.begin_event(kind, GLib.get_monotonic_time());
-            builder.add_int("page", page + 1);
-            builder.add_string("scene", binding == null ? null : binding.scene.id);
-            builder.add_double("time", time);
-            builder.add_bool("playing", playing);
-            builder.add_int("playback_id", anchor_clock);
-            builder.add_int("anchor_clock_us", anchor_clock);
-            builder.add_double("anchor_time", anchor_time);
-            builder.add_double("speed", speed);
-            builder.add_double("target", target);
-            builder.add_string("display_backend", trace_display_backend);
-            return builder;
-        }
-
-        private void flush_trace() {
-            if (trace_stream != null && trace_buffer.len > 0) {
-                trace_stream.puts(trace_buffer.str);
-                trace_stream.flush();
-                trace_buffer.truncate(0);
-            }
-        }
-
-        private void write_trace(VectorTraceWriter builder, bool stdout_too = false, bool flush = false) {
-            builder.finish();
-            if (trace_stream != null) {
-                trace_buffer.append(builder.data);
-                trace_buffer.append_c('\n');
-                if (flush || trace_buffer.len >= 256*1024) flush_trace();
-            }
-            if (stdout_too) print("%s\n", builder.data);
-        }
-
-        private void append_completed_timings(VectorTraceWriter builder, VectorTraceClock trace) {
-            builder.add_int("frame_clock_id", trace.id);
-            builder.begin_timings();
-            for (int i = 0; i < trace.pending.size;) {
-                // Name the owned nullable value so Vala releases get()'s boxed copy.
-                int64? pending_counter = trace.pending.get(i);
-                int64 counter = (int64) pending_counter;
-                var timing = trace.clock.get_timings(counter);
-                bool expired = counter < trace.clock.get_history_start();
-                if (expired || (timing != null && timing.get_complete())) {
-                    builder.add_timing(counter, expired ? 0 : timing.get_presentation_time(), expired);
-                    trace.pending.remove_at(i);
-                } else {
-                    i++;
-                }
-            }
-            int64 collected = GLib.get_monotonic_time();
-            builder.end_timings();
-            builder.add_int("feedback_collected_us", collected);
-        }
-
-        private void schedule_trace_drain() {
-            if (trace_stream == null || trace_clocks.size == 0) return;
-            trace_drain_until = GLib.get_monotonic_time() + 500000;
-            if (trace_drain_id != 0) return;
-            // Frame completion can arrive after the last draw. Poll only while
-            // stopped, without requesting more draws or changing playback.
-            trace_drain_id = Timeout.add(20, () => {
-                if (playing) {
-                    trace_drain_id = 0;
-                    return false;
-                }
-                int pending = 0;
-                foreach (var trace in trace_clocks.values) {
-                    if (trace.pending.size == 0) continue;
-                    unowned VectorTraceWriter builder = event_builder("timing");
-                    builder.add_string("view", trace.view);
-                    append_completed_timings(builder, trace);
-                    write_trace(builder);
-                    pending += trace.pending.size;
-                }
-                if (pending == 0 || GLib.get_monotonic_time() >= trace_drain_until) {
-                    unowned VectorTraceWriter builder = event_builder("trace-drained");
-                    builder.add_int("pending_frames", pending);
-                    builder.add_int("last_frame_recorded_us", last_frame_recorded_us);
-                    write_trace(builder, false, true);
-                    trace_drain_id = 0;
-                    return false;
-                }
-                flush_trace();
-                return true;
-            });
-        }
-
         public void trace_state(string reason, bool stdout_too = false) {
-            if (trace_stream == null && !stdout_too) {
-                return;
-            }
-            unowned VectorTraceWriter builder = event_builder("state");
-            builder.add_string("reason", reason);
-            builder.add_int("checkpoint", binding == null ? -1 : binding.scene.checkpoint_at(time));
-            write_trace(builder, stdout_too, true);
-            if (!playing) schedule_trace_drain();
+            diagnostics.trace_state(reason, stdout_too);
         }
 
-        public int64 diagnostic_cpu_time() {
-#if THREAD_CPU_CLOCK
-            if (trace_stream == null) return -1;
-            Posix.timespec stamp;
-            if (Posix.clock_gettime(Posix.CLOCK_THREAD_CPUTIME_ID, out stamp) != 0) return -1;
-            return (int64) stamp.tv_sec*1000000 + stamp.tv_nsec/1000;
-#else
-            return -1;
-#endif
-        }
+        public int64 diagnostic_cpu_time() { return diagnostics.diagnostic_cpu_time(); }
 
         public void record_frame(string view, double displayed_time, int64 sample_clock_us, int64 render_us,
             int64 render_cpu_us, int width, int height, Gdk.FrameClock? clock,
             Cairo.SurfaceType target_type, Cairo.SurfaceType group_target_type) {
-            if (trace_stream == null) {
-                return;
-            }
-            unowned VectorTraceWriter builder = event_builder("frame");
-            builder.add_string("view", view);
-            builder.add_double("displayed_time", displayed_time);
-            builder.add_int("sample_clock_us", sample_clock_us);
-            builder.add_int("render_us", render_us);
-            builder.add_int("render_cpu_us", render_cpu_us);
-            builder.add_int("width", width);
-            builder.add_int("height", height);
-            builder.add_int("cairo_target_type", (int) target_type);
-            builder.add_int("cairo_group_target_type", (int) group_target_type);
-            if (clock != null) {
-                var trace = trace_clocks.get(clock);
-                if (trace == null) {
-                    trace = new VectorTraceClock(clock, trace_clocks.size + 1, view);
-                    trace_clocks.set(clock, trace);
-                }
-                int64 counter = clock.get_frame_counter();
-                builder.add_int("frame_counter", counter);
-                builder.add_int("frame_time_us", clock.get_frame_time());
-                int64 refresh_interval, predicted_presentation;
-                clock.get_refresh_info(clock.get_frame_time(), out refresh_interval,
-                    out predicted_presentation);
-                builder.add_int("refresh_interval_us", refresh_interval);
-                append_completed_timings(builder, trace);
-                if (counter != trace.last_frame_counter) {
-                    trace.pending.add(counter);
-                    trace.last_frame_counter = counter;
-                }
-            }
-            last_frame_recorded_us = GLib.get_monotonic_time();
-            write_trace(builder, false, !playing);
-            if (!playing) schedule_trace_drain();
+            diagnostics.record_frame(view, displayed_time, sample_clock_us, render_us,
+                render_cpu_us, width, height, clock, target_type, group_target_type);
         }
 
         public void record_work(string name, string view, int work_page,
             int64 started_us, int64 wall_us, int64 cpu_us) {
-            if (trace_stream == null) return;
-            unowned VectorTraceWriter builder = event_builder("work");
-            builder.add_string("work", name);
-            builder.add_string("view", view);
-            builder.add_int("work_page", work_page + 1);
-            builder.add_int("started_us", started_us);
-            builder.add_int("wall_us", wall_us);
-            builder.add_int("cpu_us", cpu_us);
-            write_trace(builder, false, !playing);
+            diagnostics.record_work(name, view, work_page, started_us, wall_us, cpu_us);
         }
     }
 }

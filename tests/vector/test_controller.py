@@ -180,6 +180,79 @@ class ControllerTests(unittest.TestCase):
             self.assertFalse(button["has_tooltip"])
         self.assertIsNone(report["status_tooltip"])
 
+    def inspect_trace(self, case, destination=None):
+        environment = self.environment()
+        environment["G_DEBUG"] = "fatal-criticals"
+        if destination is not None:
+            environment["PDFPC_VECTOR_TRACE"] = str(destination)
+        with PrivateGuiSession(self.directory / case, environment) as session:
+            result = session.run([PROBE, str(self.untimed), case])
+        prefix = OUTPUT / self.id().rsplit(".", 1)[-1]
+        prefix.with_suffix(".log").write_text(
+            "STDOUT\n" + result.stdout + "\nSTDERR\n" + result.stderr, encoding="utf-8")
+        records = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+        self.assertEqual(len(records), 2, result.stdout + result.stderr)
+        for record in records:
+            self.assertEqual((record["event"], record["reason"]), ("state", "status"))
+            self.assertEqual(record["scene"], "rotation")
+            self.assertFalse(record["playing"])
+        report = json.loads(next(line[len("TRACE "):] for line in result.stdout.splitlines()
+                                 if line.startswith("TRACE ")))
+        prefix.with_suffix(".json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        self.assertGreater(report["advanced_time"], 0)
+        self.assertAlmostEqual(records[0]["time"], report["advanced_time"], places=6)
+        self.assertAlmostEqual(records[1]["time"], .3, places=6)
+        self.assertFalse(report["after_close_enabled"])
+        self.assertTrue(all(process.poll() is not None for process in session.processes))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return report, result.stderr
+
+    def test_trace_write_failure_disables_sink_not_playback_or_status(self):
+        report, errors = self.inspect_trace("trace-failure", "/dev/full")
+        self.assertFalse(report["initial_enabled"])
+        self.assertFalse(report["after_play_enabled"])
+        self.assertEqual(report["diagnostic_cpu_us"], -1)
+        self.assertEqual(errors.count("Cannot write vector trace"), 1, errors)
+        self.assertIn("/dev/full", errors)
+        self.assertNotIn("Cannot open vector trace", errors)
+
+    def test_trace_close_is_idempotent_and_status_remains_available(self):
+        destination = OUTPUT / "controller-trace.jsonl"
+        destination.unlink(missing_ok=True)
+        report, errors = self.inspect_trace("trace-normal", destination)
+        self.assertTrue(report["initial_enabled"])
+        self.assertTrue(report["after_play_enabled"])
+        self.assertEqual(errors, "")
+        records = [json.loads(line) for line in destination.read_text().splitlines()]
+        self.assertTrue(any(record["event"] == "frame" for record in records))
+        self.assertTrue(any(record["event"] == "timing" for record in records))
+        self.assertEqual(sum(record["event"] == "trace-closed" for record in records), 1)
+        self.assertEqual(records[-1]["event"], "trace-closed")
+        self.assertEqual(sum(record.get("reason") == "status" for record in records), 1)
+
+    def test_status_without_trace_does_not_enable_collection(self):
+        report, errors = self.inspect_trace("trace-none")
+        self.assertFalse(report["initial_enabled"])
+        self.assertFalse(report["after_play_enabled"])
+        self.assertEqual(report["diagnostic_cpu_us"], -1)
+        self.assertEqual(errors, "")
+
+    def test_stopped_collector_does_not_retain_playback(self):
+        destination = OUTPUT / "released-playback.jsonl"
+        destination.unlink(missing_ok=True)
+        environment = self.environment()
+        environment.update(PDFPC_VECTOR_TRACE=str(destination), G_DEBUG="fatal-criticals")
+        with PrivateGuiSession(self.directory / "trace-release", environment) as session:
+            result = session.run([PROBE, str(self.untimed), "trace-release"])
+        (OUTPUT / "trace-release.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertIn("PASS trace-release", result.stdout)
+        records = [json.loads(line) for line in destination.read_text().splitlines()]
+        self.assertEqual(records[-1]["event"], "frame")
+        self.assertEqual(records[-1]["view"], "lifetime")
+        self.assertTrue(all(process.poll() is not None for process in session.processes))
+
     def test_timeout_closes_display_bus_and_probe(self):
         session = PrivateGuiSession(self.directory / "timeout", self.environment())
         with self.assertRaises(subprocess.TimeoutExpired) as stopped:

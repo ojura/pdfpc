@@ -257,6 +257,12 @@ changes, paused draws and normal quit flush them. A short stopped-state
 collector retrieves delayed GTK completion feedback without requesting
 additional draws.
 
+The optional diagnostic owner holds the file, pending feedback and collector;
+it does not retain playback. Closing playback cancels collection. A write or
+flush failure reports the destination once and disables further file output,
+feedback collection and diagnostic CPU sampling. Animation, lecturer controls
+and explicit `vectorStatus` output continue normally.
+
 Each event reuses a text buffer, avoiding a temporary JSON object graph for every
 frame. Buffered trace output is flushed at 256 KiB. Events are constructed
 synchronously on the GTK thread.

@@ -117,6 +117,88 @@ int main(string[] args) {
             presenter.check_vector_button_actions();
             presenter.hide();
             break;
+        case "trace-release":
+            animation.close_trace();
+            var presenter = new ProbePresenter(controller);
+            controller.presenter = presenter;
+            presenter.show_all();
+            pump(200);
+            var clock = presenter.main_view.get_frame_clock();
+            check(clock != null && clock.get_frame_counter() >= 0,
+                "The lifetime case needs an actual GTK frame clock");
+            pdfpc.VectorPlayback? temporary = new pdfpc.VectorPlayback(controller);
+            var released = GLib.WeakRef(temporary);
+            temporary.record_frame("lifetime", 0, GLib.get_monotonic_time(), 0, -1,
+                800, 600, clock, Cairo.SurfaceType.IMAGE, Cairo.SurfaceType.IMAGE);
+            check(temporary.tracing_enabled, "The stopped collector must have an enabled sink");
+            // Drop the only strong playback reference before iterating the
+            // loop: a diagnostic timeout must not postpone its destruction.
+            temporary = null;
+            check(released.get() == null, "The collector retained its playback owner");
+            string before, after;
+            string? filename = Environment.get_variable("PDFPC_VECTOR_TRACE");
+            check(filename != null, "The lifetime case needs a trace file");
+            FileUtils.get_contents(filename, out before);
+            pump(550);
+            FileUtils.get_contents(filename, out after);
+            check(before == after, "A stopped collector wrote after playback destruction");
+            presenter.hide();
+            break;
+        case "trace-failure":
+        case "trace-normal":
+        case "trace-none":
+            bool initial_trace = animation.tracing_enabled;
+            var presenter = new ProbePresenter(controller);
+            controller.presenter = presenter;
+            presenter.show_all();
+            pump(200);
+            presenter.update();
+            controller.trigger_action("vectorPlayAll", null);
+            var ready_by = GLib.get_monotonic_time() + 2000000;
+            while (animation.waiting && GLib.get_monotonic_time() < ready_by) pump(5);
+            check(animation.playing && controller.is_running(),
+                "A trace sink must not prevent animation or the talk timer starting");
+            pump(80);
+            animation.pause();
+            double advanced_time = animation.time;
+            check(advanced_time > 0, "Playback must continue after a trace write error");
+            controller.trigger_action("vectorStatus", null);
+            for (int i = 0; i < 3; i++) {
+                animation.seek(0.1*(i + 1));
+            }
+            pump(550);
+            bool after_play = animation.tracing_enabled;
+            int64 diagnostic_cpu = animation.diagnostic_cpu_time();
+            animation.close_trace();
+            animation.close_trace();
+            controller.trigger_action("vectorStatus", null);
+            pump(50);
+            var report = new Json.Builder();
+            report.begin_object();
+            report.set_member_name("initial_enabled");
+            report.add_boolean_value(initial_trace);
+            report.set_member_name("after_play_enabled");
+            report.add_boolean_value(after_play);
+            report.set_member_name("after_close_enabled");
+            report.add_boolean_value(animation.tracing_enabled);
+            report.set_member_name("advanced_time");
+            report.add_double_value(advanced_time);
+            report.set_member_name("diagnostic_cpu_us");
+            report.add_int_value(diagnostic_cpu);
+            report.end_object();
+            var generator = new Json.Generator();
+            generator.set_root(report.get_root());
+            print("TRACE %s\n", generator.to_data(null));
+            presenter.hide();
+            bool expected_trace = args[2] == "trace-normal";
+            check(initial_trace == expected_trace,
+                "Early reload must disable a trace sink that rejects its first write");
+            check(after_play == expected_trace,
+                "A failed trace sink must stay disabled while lecture controls continue");
+            check(expected_trace || diagnostic_cpu == -1,
+                "Disabled trace collection must not sample diagnostic CPU time");
+            check(!animation.tracing_enabled, "Closing a trace is idempotent");
+            break;
         case "next-start":
             controller.next_page();
             check(animation.playing && controller.current_slide_number == 0,
