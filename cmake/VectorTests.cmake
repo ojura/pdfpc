@@ -87,7 +87,6 @@ if(PYTHONINTERP_FOUND)
         endif()
         find_program(VECTOR_XVFB Xvfb)
         find_program(VECTOR_XDOTOOL xdotool)
-        find_program(VECTOR_DBUS_RUN dbus-run-session)
         find_program(VECTOR_DBUS_DAEMON dbus-daemon)
         find_program(VECTOR_IMAGE_IMPORT import)
         if(VECTOR_XVFB AND VECTOR_DBUS_DAEMON AND UNIX)
@@ -101,10 +100,15 @@ if(PYTHONINTERP_FOUND)
                     $<TARGET_FILE:vector-controller-probe>
                     --output ${CMAKE_BINARY_DIR}/tests/vector/controller)
             set_tests_properties(vector-controller PROPERTIES TIMEOUT 90)
+            add_test(NAME vector-gui-session
+                COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_gui_session.py
+                    --pdfpc $<TARGET_FILE:pdfpc>
+                    --output ${CMAKE_BINARY_DIR}/tests/vector/gui-session)
+            set_tests_properties(vector-gui-session PROPERTIES TIMEOUT 90)
         endif()
-        if(VECTOR_XVFB AND VECTOR_XDOTOOL AND VECTOR_DBUS_RUN AND VECTOR_IMAGE_IMPORT)
+        if(VECTOR_XVFB AND VECTOR_XDOTOOL AND VECTOR_DBUS_DAEMON AND VECTOR_IMAGE_IMPORT AND UNIX)
             add_test(NAME vector-gui
-                COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/vector/test_gui.py
+                COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_gui.py
                     $<TARGET_FILE:pdfpc> --output ${CMAKE_BINARY_DIR}/tests/vector/gui)
             set_tests_properties(vector-gui PROPERTIES TIMEOUT 90)
             if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -112,7 +116,7 @@ if(PYTHONINTERP_FOUND)
                 add_library(vector-future-frame-clock SHARED tests/vector/future_frame_clock.c)
                 target_link_libraries(vector-future-frame-clock PRIVATE PkgConfig::VECTOR_GDK ${CMAKE_DL_LIBS})
                 add_test(NAME vector-gui-future-clock
-                    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/vector/test_gui.py
+                    COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_gui.py
                         $<TARGET_FILE:pdfpc> --output ${CMAKE_BINARY_DIR}/tests/vector/gui-future-clock
                         --future-frame-clock $<TARGET_FILE:vector-future-frame-clock>)
                 set_tests_properties(vector-gui-future-clock PROPERTIES TIMEOUT 90)

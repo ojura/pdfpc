@@ -5,7 +5,6 @@ import argparse
 import json
 import math
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -17,6 +16,7 @@ from reportlab.pdfgen import canvas
 
 from test_renderer import fixture
 from trace_metrics import timing_report
+from gui_session import PrivateGuiSession
 
 
 def wait_for(check, timeout=10, description="condition"):
@@ -242,14 +242,6 @@ def main():
     parser.add_argument("--future-frame-clock", type=Path,
                         help="Test-only preload library that moves GDK frame time into the future")
     options = parser.parse_args()
-    if not os.environ.get("PDFPC_VECTOR_TEST_BUS"):
-        command = ["dbus-run-session", "--", "env", "PDFPC_VECTOR_TEST_BUS=1",
-                   "python3", str(Path(__file__).resolve()), str(options.pdfpc.resolve()),
-                   "--output", str(options.output.resolve())]
-        if options.future_frame_clock:
-            command += ["--future-frame-clock", str(options.future_frame_clock.resolve())]
-        return subprocess.run(command).returncode
-
     output = options.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     source = output / "fixture.vector.json"
@@ -269,18 +261,8 @@ def main():
     trace = output / "trace.jsonl"
     trace.write_text("")
 
-    read_fd, write_fd = os.pipe()
-    xvfb_log = (output / "xvfb.log").open("w")
-    xvfb = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0",
-                             "3200x1800x24", "-nolisten", "tcp", "-noreset"],
-                            pass_fds=(write_fd,), stdout=xvfb_log, stderr=xvfb_log)
-    os.close(write_fd)
-    with os.fdopen(read_fd) as display_reader:
-        display_number = display_reader.readline().strip()
-    if not display_number:
-        raise RuntimeError("Xvfb did not start")
     title_suffix = "test-build 0123abcd | 2026-11-09T01:02:03Z"
-    environment = {**os.environ, "DISPLAY": f":{display_number}", "GDK_BACKEND": "x11",
+    environment = {**os.environ, "GDK_BACKEND": "x11",
                    "PDFPC_TITLE_SUFFIX": title_suffix,
                    "PDFPC_VECTOR_MANIFEST": str(source), "PDFPC_VECTOR_TRACE": str(trace),
                    "XDG_CONFIG_HOME": str(output / "config"),
@@ -293,12 +275,6 @@ def main():
         environment["LD_LIBRARY_PATH"] = str(library.parent) + (":" + previous_path if previous_path else "")
         previous_preload = environment.get("LD_PRELOAD", "")
         environment["LD_PRELOAD"] = library.name + (" " + previous_preload if previous_preload else "")
-    app_log = (output / "pdfpc.log").open("w")
-    app = subprocess.Popen([str(options.pdfpc.resolve()), "-N", "-w", "both",
-                            "-Z", "1000:750", "-P", "2", str(pdf)],
-                           env=environment, stdout=app_log, stderr=app_log,
-                           start_new_session=True)
-
     def events():
         result = []
         for line in trace.read_text().splitlines():
@@ -331,7 +307,12 @@ def main():
         assert check_state(position=held, playing=False), state()
 
     findings = []
-    try:
+    with PrivateGuiSession(output, environment, screen="3200x1800x24") as session, \
+            (output / "pdfpc.log").open("w") as app_log:
+        environment = session.environment
+        app = session.start([str(options.pdfpc.resolve()), "-N", "-w", "both",
+                             "-Z", "1000:750", "-P", "2", str(pdf)],
+                            stdout=app_log, stderr=app_log)
         wait_for(lambda: app.poll() is None and check_state(page=2, position=0, playing=False),
                  description="initial paused derivation")
         wait_for(lambda: {e.get("view") for e in events() if e["event"] == "frame"} ==
@@ -535,18 +516,6 @@ def main():
                   "timing": measured_timing}
         (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps(report, indent=2))
-    finally:
-        if app.poll() is None:
-            os.killpg(app.pid, signal.SIGTERM)
-            try:
-                app.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(app.pid, signal.SIGKILL)
-                app.wait()
-        xvfb.terminate()
-        xvfb.wait(timeout=5)
-        app_log.close()
-        xvfb_log.close()
     return 0
 
 

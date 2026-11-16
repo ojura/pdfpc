@@ -1,12 +1,83 @@
 """Own a private X server, session bus and the processes used by GUI tests."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import select
 import signal
 import subprocess
+import sys
 import time
+
+
+_sessions = []
+_previous_handlers = {}
+_critical_depth = 0
+_pending_signal = None
+
+
+def _restore_handlers():
+    if _sessions or _critical_depth:
+        return
+    for number, previous in _previous_handlers.items():
+        if signal.getsignal(number) == _terminated:
+            signal.signal(number, previous)
+    _previous_handlers.clear()
+
+
+@contextmanager
+def _registering_or_closing():
+    """Finish child registration or cleanup before dispatching termination."""
+    global _critical_depth, _pending_signal
+    _critical_depth += 1
+    try:
+        yield
+    finally:
+        _critical_depth -= 1
+        if not _critical_depth:
+            pending, _pending_signal = _pending_signal, None
+            _restore_handlers()
+            if pending is not None:
+                _finish_termination(*pending)
+
+
+def _terminated(number, frame):
+    global _pending_signal
+    previous = _previous_handlers[number]
+    if _critical_depth:
+        if _pending_signal is None:
+            _pending_signal = (number, frame, previous)
+        return
+    _finish_termination(number, frame, previous)
+
+
+def _finish_termination(number, frame, previous):
+    with _registering_or_closing():
+        for session in reversed(list(_sessions)):
+            try:
+                session.close()
+            except BaseException as error:
+                print("GUI test cleanup failed: " + str(error), file=sys.stderr)
+    if callable(previous):
+        previous(number, frame)
+    elif previous != signal.SIG_IGN:
+        # Preserve a signal exit status instead of converting it to success or
+        # a Python exception. Callable handlers retain their own exit policy.
+        signal.signal(number, previous)
+        os.kill(os.getpid(), number)
+
+
+def _register_session(session):
+    if session in _sessions:
+        return
+    if not _sessions:
+        for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            previous = signal.getsignal(number)
+            if previous != signal.SIG_IGN:
+                _previous_handlers[number] = previous
+                signal.signal(number, _terminated)
+    _sessions.append(session)
 
 
 class PrivateGuiSession:
@@ -20,11 +91,18 @@ class PrivateGuiSession:
         self.screen = screen
         self.processes = []
         self.logs = []
+        self._closed = False
 
     def start(self, command, **kwargs):
-        process = subprocess.Popen(command, env=self.environment,
-                                   start_new_session=True, **kwargs)
-        self.processes.append(process)
+        if self._closed:
+            raise RuntimeError("This private GUI session is already closed")
+        # A signal between Popen returning and appending its result must not
+        # leave a newly created process outside this session's cleanup list.
+        with _registering_or_closing():
+            _register_session(self)
+            process = subprocess.Popen(command, env=self.environment,
+                                       start_new_session=True, **kwargs)
+            self.processes.append(process)
         return process
 
     def _ready(self, command, name, timeout=10):
@@ -86,20 +164,27 @@ class PrivateGuiSession:
         return subprocess.CompletedProcess(command, process.returncode, output, error)
 
     def close(self):
-        # Stop clients before the bus and display. Every process was started
-        # directly in its own session, not hidden behind a shell wrapper.
-        for process in reversed(self.processes):
-            self._signal_group(process, signal.SIGTERM)
-        for process in reversed(self.processes):
+        if self._closed:
+            return
+        with _registering_or_closing():
+            self._closed = True
             try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._signal_group(process, signal.SIGKILL)
-                process.wait(timeout=5)
-            # Also stop any remaining child in the owned process group.
-            self._signal_group(process, signal.SIGKILL)
-        for log in self.logs:
-            log.close()
+                # Stop clients before the bus and display. Every process was
+                # started directly in its own process group.
+                for process in reversed(self.processes):
+                    self._signal_group(process, signal.SIGTERM)
+                for process in reversed(self.processes):
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self._signal_group(process, signal.SIGKILL)
+                        process.wait(timeout=5)
+                    self._signal_group(process, signal.SIGKILL)
+            finally:
+                for log in self.logs:
+                    log.close()
+                if self in _sessions:
+                    _sessions.remove(self)
 
     def __exit__(self, *_exc):
         self.close()
