@@ -53,6 +53,15 @@ A list of all possible actions can be obtained via the \fB\-L\fR command line
 option of \fBpdfpc\fR(1). Use the \fB\-B\fR command line option to list the
 action bindings defined.
 
+.PP
+Vector animation actions are \fBvectorToggle\fR, \fBvectorPlayAll\fR,
+\fBvectorRestart\fR, \fBvectorFinish\fR, \fBvectorNextCheckpoint\fR,
+\fBvectorPreviousCheckpoint\fR, \fBvectorSlower\fR and \fBvectorFaster\fR.
+The ordinary \fBnext\fR and \fBprev\fR actions visit checkpoints before
+leaving an animated page. See \fBpdfpc\fR(1) for the default keys and playback
+behavior. \fBvectorStatus\fR prints the current animation state for scripts
+and diagnostics.
+
 .SS Options
 .PP
 Some permanent changes can be configured via the config file. The syntax is:
@@ -180,8 +189,10 @@ generated one is used).
 .TP
 .B rest-static-root
 Root path to serve static HTML content. If begins with "/", it is interpreted as
-the absolute path; otherwise, relative to @CMAKE_INSTALL_PREFIX@/share/pdfpc
-(string, Default is "www").
+the absolute path; otherwise, relative to pdfpc's resolved data directory
+(string, Default is "www"). \fBPDFPC_DATA_DIR\fR selects that directory when
+nonempty. Without it, normal installation paths, \fB\-\-no-install\fR and
+Windows executable-relative lookup apply as described in \fBpdfpc\fR(1).
 .TP
 .B spotlight-opacity
 Set opacity of the area outside of the spotlight, in percent (int, default is
@@ -219,7 +230,8 @@ Set the initial toolbox state minimized (bool, Default is false).
 .TP
 .B transition-fps
 Frames-per-second for slide transitions (int, Default is 25). Set to 0 to
-disable all transitions.
+disable all page transitions. Vector animation redraws use the display's GTK
+frame clock rather than this setting.
 .TP
 .B windowed-mode
 Set the initial windowed mode: none, presenter, presentation, or both (Default
@@ -250,7 +262,8 @@ option black-on-end true
 .PP
 .B @CMAKE_INSTALL_FULL_SYSCONFDIR@/pdfpcrc
 .RS 4
-System-wide configuration file
+System-wide configuration file. \fBPDFPC_CONFIG_DIR\fR selects another
+directory containing \fBpdfpcrc\fR; see \fBpdfpc\fR(1) for lookup precedence.
 .RE
 .PP
 .B $XDG_CONFIG_HOME/pdfpc/pdfpcrc

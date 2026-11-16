@@ -74,7 +74,9 @@ bottom, or none. Default: none). Note that this disables slide auto-grouping.
 .BI "\-N, \-\-no\-install"
 Allow for testing pdfpc without proper installation. Icons, configuration files,
 etc. will be loaded from the source path locations. Mostly intended for
-developers.
+developers. Nonempty \fBPDFPC_DATA_DIR\fR and \fBPDFPC_CONFIG_DIR\fR overrides
+take precedence. On Windows, executable-relative resources are checked before
+the source tree; see \fBENVIRONMENT\fR below.
 .TP
 .BI "\-p, \-\-rest\-port"
 Port the REST server binds to. (Default: 8088)
@@ -151,10 +153,28 @@ model name or the index can be used.
 These are the default keybindings for pdfpc:
 .TP
 .B Right cursor key / Down cursor key / Page down / Return / Space / 1st mouse button / Mouse wheel down
-Go forward one slide
+On an animated page, play to the next vector checkpoint; during playback, show
+that checkpoint immediately. At the final checkpoint, or on a static page,
+go forward one slide.
 .TP
 .B Left cursor key / Up cursor key / Page up / Backspace / 3rd mouse button / Mouse wheel up
-Go back one slide
+On an animated page, show the preceding vector checkpoint. At the initial
+checkpoint, or on a static page, go back one slide.
+.TP
+.B a
+Play or pause the current vector animation
+.TP
+.B v
+Play the complete vector animation continuously
+.TP
+.B r / e
+Show the initial / final vector animation state
+.TP
+.B Ctrl + Right / Ctrl + Left
+Immediately show the next / previous vector checkpoint without leaving the page
+.TP
+.B [ / ]
+Halve / double vector animation playback speed, within 0.1 to 8 times normal
 .TP
 .B Shift + Page down
 Go forward one user slide (see \fBOverlays\fR below)
@@ -341,8 +361,11 @@ given parameters.  If no duration is specified (or if a value of 0 is given to
 the \-d option), the timer will show how much time has been spent.  The duration
 is stored automatically, so you do not need to repeat it for every invocation.
 .PP
-The timer is started if you are navigating away from the first page for the
-first time.  This feature is quite useful as you may want to show the title page
+The timer starts when navigating away from the first page or when starting
+vector animation playback, including on the first page. Starting or resuming
+vector playback also resumes a paused talk timer; pausing the animation does
+not pause that timer. Seeking to a vector checkpoint does not start the timer.
+This is useful when showing the title page
 of your presentation while people are still entering the room and the
 presentation has not really begun yet.  If you want to start over you can
 use the \[aq]Ctrl + t\[aq] key which will make the presenter reset the timer.
@@ -493,6 +516,37 @@ backward) movement; in the later case, the transition is "inverted".
 .PP
 Advancing slides automatically is also supported.
 
+.SS Vector animations
+.PP
+Place a timeline named \fIlecture.vector.json\fR beside \fIlecture.pdf\fR.
+A URI link \fBpdfpc-vector:scene-id\fR on a PDF page selects a scene from that
+timeline. The link rectangle determines its position and size. The PDF can
+contain a static vector poster in the same rectangle for ordinary viewers.
+One vector region is supported per page. Cairo draws the animation paths at
+the display resolution, including on resized and high-DPI windows.
+.PP
+An animated page starts paused. Next plays to the next checkpoint and pauses;
+another Next during motion immediately shows that checkpoint. Next at the final
+checkpoint advances to the next PDF page. Previous shows the preceding
+checkpoint and returns to the previous PDF page when already at the initial
+state. Entering an animated page backwards shows its completed state.
+.PP
+The \fBa\fR key or a click in the vector region toggles playback. The \fBv\fR
+key plays continuously through the checkpoints. Use \fBr\fR to return to the
+initial state, \fBe\fR for the final state and \fBCtrl+Left/Right\fR to seek
+without leaving the page. The presenter controls show the current checkpoint,
+playback state and speed. These keys can be rebound through \fBpdfpcrc\fR(5).
+.PP
+Blanking, hiding, freezing or opening the overview pauses vector playback.
+The play controls preserve its position while that state remains active.
+Ordinary Next while blanked instead advances and unblanks the next page.
+Presenter and audience use one monotonic clock for animation time.
+.PP
+The complete timeline format and trace fields are documented in
+\fI@CMAKE_INSTALL_FULL_DOCDIR@/VECTOR_ANIMATIONS.md\fR. A runnable PDF, its
+timeline and their Python source are installed in the adjacent
+\fIexamples\fR directory. The ready-made example needs no authoring tools.
+
 .SS Movies
 .PP
 Pdfpc can play back movies included in the PDF file.  Movies may be started
@@ -592,7 +646,8 @@ start_time
 .PP
 With GTK3 it is possible to modify the appearance of pdfpc. There are two
 locations where pdfpc is looking for files. The default location is
-@CMAKE_INSTALL_PREFIX@/share/pixmaps/pdfpc/pdfpc.css. It can be copied
+@CMAKE_INSTALL_PREFIX@/share/pdfpc/css/pdfpc.css, subject to the data-directory
+lookup described under \fBENVIRONMENT\fR. It can be copied
 to $XDG_CONFIG_HOME/pdfpc/pdfpc.css and modified to the user's liking.
 .PP
 The geometry of various views (the current/next etc slide) in the presenter
@@ -643,6 +698,44 @@ can open it with:
 .RS
 $ texdoc pdfpc
 .RE
+
+.SH ENVIRONMENT
+.TP
+.B PDFPC_DATA_DIR
+Directory containing \fBcss\fR, \fBicons\fR and relative REST static resources.
+A nonempty value takes precedence over installed and source-tree paths,
+including when \fB\-\-no-install\fR is used.
+.TP
+.B PDFPC_CONFIG_DIR
+Directory containing the system \fBpdfpcrc\fR. A nonempty value takes precedence
+over installed and source-tree paths. The user's XDG configuration is still
+read after the system file.
+.PP
+Without these overrides, Windows first checks existing files relative to the
+executable: \fB../share/pdfpc\fR for data and \fB../etc/pdfpcrc\fR for
+configuration. Otherwise \fB\-\-no-install\fR selects the source tree, and
+normal operation uses the configured installation directories. Empty override
+values are treated as unset. User CSS and configuration retain their normal
+XDG locations.
+.TP
+.B PDFPC_TITLE_SUFFIX
+Plain text appended in square brackets to both window titles. A launcher can
+use it to identify a document or build. Empty or unset values leave the normal
+titles unchanged.
+.TP
+.B PDFPC_VECTOR_MANIFEST
+Select the vector timeline JSON file instead of the adjacent
+\fB.vector.json\fR file.
+.TP
+.B PDFPC_VECTOR_SPEED
+Initial vector playback speed, between 0.1 and 8. Invalid values leave the
+normal speed of 1 unchanged.
+.TP
+.B PDFPC_VECTOR_TRACE
+File to which vector diagnostics are appended as JSON Lines. Use a separate
+file per viewer launch when collecting timing measurements. Tracing is off
+when this variable is unset or empty. See the installed vector guide for the
+distinction between draw timing and display presentation feedback.
 
 .SH BUGS
 

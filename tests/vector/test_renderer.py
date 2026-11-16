@@ -7,6 +7,7 @@ import json
 import math
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,22 +15,12 @@ from pathlib import Path
 from PIL import Image
 from pypdf import PdfReader
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "demo"))
+from vector_animation import timeline
+
 
 def fixture():
-    def key(time, coords=None, opacity=1):
-        state = {"time": time, "fill": [1, 0, 0, opacity],
-                 "stroke": [0, 0, 0, 0], "stroke_width": 0}
-        if coords is not None:
-            state["coords"] = coords
-        return state
-    start = [10, 20, 30, 20, 30, 40, 10, 40]
-    end = [70, 20, 90, 20, 90, 40, 70, 40]
-    return {"version": 1, "scenes": [{"id": "rotation", "width": 100, "height": 60,
-        "duration": 3, "background": [1, 1, 1, 1],
-        "checkpoints": [{"time": 0, "label": "Initial"}, {"time": 1, "label": "Held"},
-                        {"time": 2, "label": "Moved"}, {"time": 3, "label": "Faded"}],
-        "objects": [{"id": "square", "z": 0, "commands": "MLLLZ", "fill_rule": "nonzero",
-            "keyframes": [key(0, start), key(1), key(2, end), key(3, opacity=0.5)]}]}]}
+    return timeline("rotation")
 
 
 class RendererTests(unittest.TestCase):

@@ -5,10 +5,29 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/pdfpc.1
 DESTINATION
     ${CMAKE_INSTALL_MANDIR}/man1
+COMPONENT Documentation
 )
 
 install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/pdfpcrc.5
 DESTINATION
     ${CMAKE_INSTALL_MANDIR}/man5
+COMPONENT Documentation
+)
+
+install(FILES
+    ${CMAKE_SOURCE_DIR}/VECTOR_ANIMATIONS.md
+    ${CMAKE_SOURCE_DIR}/LICENSE.txt
+DESTINATION
+    ${CMAKE_INSTALL_DOCDIR}
+COMPONENT Documentation
+)
+
+install(FILES
+    ${CMAKE_SOURCE_DIR}/demo/vector_animation.py
+    ${CMAKE_SOURCE_DIR}/demo/vector-animation.pdf
+    ${CMAKE_SOURCE_DIR}/demo/vector-animation.vector.json
+DESTINATION
+    ${CMAKE_INSTALL_DOCDIR}/examples
+COMPONENT Documentation
 )

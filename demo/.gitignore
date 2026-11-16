@@ -1,5 +1,7 @@
-*
 !Makefile
 !*.jpg
 !*.avi
 !*.tex
+!vector_animation.py
+!vector-animation.pdf
+!vector-animation.vector.json

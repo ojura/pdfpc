@@ -2,9 +2,9 @@
 pdfpc
 =====
 
-This fork adds native, resolution-independent vector animation to PDF slides.
+pdfpc supports resolution-independent vector animation inside PDF slides.
 See `Vector animations <VECTOR_ANIMATIONS.md>`_ for authoring, presenter controls,
-the timeline format and tests. The implementation is on ``vector-animations``.
+the timeline format and tests.
 
 |ubuntubuild| |windowsbuild|
 
@@ -81,6 +81,11 @@ Sample presentations
 
 - `Simple demo <https://github.com/pdfpc/pdfpc/releases/latest/download/pdfpc-demo.pdf>`_
 - `Embedded movies <https://github.com/pdfpc/pdfpc/releases/latest/download/pdfpc-video-example.zip>`_
+- `Vector animation <demo/vector-animation.pdf>`_, with its
+  `timeline <demo/vector-animation.vector.json>`_ and
+  `Python source <demo/vector_animation.py>`_. Keep the PDF and timeline in the
+  same directory, then open the PDF with pdfpc. The renderer and GUI tests use
+  the same scene definition.
 
 Usage
 =====

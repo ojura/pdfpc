@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "scenes": [
+    {
+      "id": "moving-square",
+      "width": 100,
+      "height": 60,
+      "duration": 3,
+      "background": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "checkpoints": [
+        {
+          "time": 0,
+          "label": "Initial"
+        },
+        {
+          "time": 1,
+          "label": "Held"
+        },
+        {
+          "time": 2,
+          "label": "Moved"
+        },
+        {
+          "time": 3,
+          "label": "Faded"
+        }
+      ],
+      "objects": [
+        {
+          "id": "square",
+          "z": 0,
+          "commands": "MLLLZ",
+          "fill_rule": "nonzero",
+          "keyframes": [
+            {
+              "time": 0,
+              "fill": [
+                1,
+                0,
+                0,
+                1
+              ],
+              "stroke": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "stroke_width": 0,
+              "coords": [
+                10,
+                20,
+                30,
+                20,
+                30,
+                40,
+                10,
+                40
+              ]
+            },
+            {
+              "time": 1,
+              "fill": [
+                1,
+                0,
+                0,
+                1
+              ],
+              "stroke": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "stroke_width": 0
+            },
+            {
+              "time": 2,
+              "fill": [
+                1,
+                0,
+                0,
+                1
+              ],
+              "stroke": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "stroke_width": 0,
+              "coords": [
+                70,
+                20,
+                90,
+                20,
+                90,
+                40,
+                70,
+                40
+              ]
+            },
+            {
+              "time": 3,
+              "fill": [
+                1,
+                0,
+                0,
+                0.5
+              ],
+              "stroke": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "stroke_width": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

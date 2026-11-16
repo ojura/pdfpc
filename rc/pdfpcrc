@@ -13,7 +13,7 @@ bind Left               prev
 bind Up                 prev
 bind BackSpace          prev
 
-# Vector derivations: Next/Previous visit semantic checkpoints on these slides.
+# Vector animation controls: Next/Previous visit checkpoints on these slides.
 bind a                  vectorToggle
 bind C+Right            vectorNextCheckpoint
 bind C+Left             vectorPreviousCheckpoint
