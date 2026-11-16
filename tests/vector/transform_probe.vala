@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Compare the production PDF renderer and vector binding in the same viewport.
 int main(string[] args) {
-    if (args.length != 8) return 2;
+    if (args.length != 8 && args.length != 11) return 2;
     new pdfpc.Options();
     pdfpc.Options.no_install = true;
     var metadata = new pdfpc.Metadata.Pdf(args[1]);
@@ -31,6 +31,28 @@ int main(string[] args) {
         }
         if (binding == null) return 2;
         var vector = new Cairo.ImageSurface(Cairo.Format.RGB24, width, height);
+        if (args.length == 11) {
+            double device_scale = double.parse(args[8]);
+            double offset_x = double.parse(args[9]), offset_y = double.parse(args[10]);
+            // Reproduce GTK's physical viewport on a scaled/offset surface.
+            var shifted = new Cairo.ImageSurface(Cairo.Format.RGB24, width, height);
+            shifted.set_device_scale(device_scale, device_scale);
+            shifted.set_device_offset(offset_x, offset_y);
+            var base_context = new Cairo.Context(shifted);
+            base_context.set_source_rgb(1, 1, 1); base_context.paint();
+            base_context.scale(1/device_scale, 1/device_scale);
+            base_context.set_source_surface(pdf, 0, 0); base_context.paint();
+            vector.set_device_scale(device_scale, device_scale);
+            vector.set_device_offset(offset_x, offset_y);
+            var over = new Cairo.Context(vector);
+            over.set_source_rgb(1, 1, 1); over.paint();
+            over.scale(1/device_scale, 1/device_scale);
+            over.set_source_surface(pdf, 0, 0); over.paint();
+            binding.draw(over, metadata, 0, width, height, zoom);
+            if (shifted.write_to_png(args[7] + "-pdf.png") != Cairo.Status.SUCCESS ||
+                vector.write_to_png(args[7] + "-vector.png") != Cairo.Status.SUCCESS) return 1;
+            return 0;
+        }
         var context = new Cairo.Context(vector);
         context.set_source_rgb(1, 1, 1); context.paint();
         binding.draw(context, metadata, 0, width, height, zoom);

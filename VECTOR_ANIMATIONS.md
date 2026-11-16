@@ -150,6 +150,13 @@ uniformly to fit the link rectangle and centers it there. Drawing is clipped
 to both the scene canvas and that rectangle. Any unused margins retain the
 underlying PDF. Strokes have round caps and joins.
 
+When drawing over the cached PDF image, the opaque scene background replaces
+every physical pixel covered by the fitted poster, including its antialiased
+edge. Page transforms, device scale and surface offsets all enter that coverage
+calculation. Paths retain their original geometry and scene-canvas clip; nearby
+PDF content and unused fit margins remain unchanged. Standalone PDF/SVG exports
+retain geometric background coverage rather than pixel rounding.
+
 The object array is sorted by ascending `z`, so larger values appear in front.
 Use distinct values when the overlap order matters. The order stays fixed for
 the entire timeline; changing geometry or opacity does not reorder the paths.
@@ -221,7 +228,10 @@ The probe exports PDF, SVG or PNG according to the output suffix. Tests cover
 interpolation, held geometry, alpha, glyph holes, scaling, vector PDF output,
 malformed data, both native windows, navigation, pause/resume, checkpoint
 skipping, freeze/blank/hide, reload, resizing, per-view clock evaluation,
-final-frame accounting, buffered shutdown traces and real input events.
+final-frame accounting, buffered shutdown traces and real input events. The
+region-edge suite checks fractional positions and device offsets, neighbouring
+PDF pixels, clipped off-canvas paths, and actual GTK windows against their
+composed snapshots before and after resizing at display scales one and two.
 On Linux, a second GUI run injects a GDK timestamp eight seconds in the future
 and verifies intermediate states and actual checkpoint duration in both views.
 The trace-writer fixture checks JSON escaping, numeric precision, locale

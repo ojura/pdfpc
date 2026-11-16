@@ -349,12 +349,57 @@ namespace pdfpc {
             return current;
         }
 
-        public void draw(Cairo.Context cr, double time) {
+        private static double snap_pixel_boundary(double value) {
+            // Page fitting and the two surface transforms can put an exact
+            // integer a few floating-point steps to either side. Correct only
+            // that arithmetic error before outward pixel coverage is selected.
+            double nearest = Math.round(value);
+            double tolerance = 8*double.EPSILON*double.max(1, Math.fabs(value));
+            return Math.fabs(value - nearest) <= tolerance ? nearest : value;
+        }
+
+        private bool paint_pixel_background(Cairo.Context cr) {
+            var matrix = cr.get_matrix();
+            // PDF overlays are axis-aligned. Other callers retain geometric
+            // coverage rather than painting a rotated scene's bounding box.
+            if (matrix.xy != 0 || matrix.yx != 0 || background[3] != 1) return false;
+
+            double x0 = 0, y0 = 0, x1 = width, y1 = height;
+            cr.user_to_device(ref x0, ref y0);
+            cr.user_to_device(ref x1, ref y1);
+            unowned Cairo.Surface target = cr.get_group_target();
+            double sx, sy, ox, oy;
+            target.get_device_scale(out sx, out sy);
+            target.get_device_offset(out ox, out oy);
+            // Surface transforms are not included in user_to_device(). Round
+            // in physical pixels, then undo only that hidden surface transform.
+            double left = Math.floor(snap_pixel_boundary(double.min(x0*sx + ox, x1*sx + ox)));
+            double top = Math.floor(snap_pixel_boundary(double.min(y0*sy + oy, y1*sy + oy)));
+            double right = Math.ceil(snap_pixel_boundary(double.max(x0*sx + ox, x1*sx + ox)));
+            double bottom = Math.ceil(snap_pixel_boundary(double.max(y0*sy + oy, y1*sy + oy)));
             cr.save();
+            cr.identity_matrix();
+            cr.new_path();
+            cr.rectangle((left - ox)/sx, (top - oy)/sy,
+                (right - left)/sx, (bottom - top)/sy);
+            cr.set_source_rgb(background[0], background[1], background[2]);
+            cr.fill();
+            cr.restore();
+            return true;
+        }
+
+        public void draw(Cairo.Context cr, double time, bool pixel_background = false) {
+            cr.save();
+            // Replace the cached poster's antialiased edge only for raster PDF
+            // overlays. Path geometry and clipping remain at authored bounds.
+            bool background_painted = pixel_background && paint_pixel_background(cr);
+            cr.new_path();
             cr.rectangle(0, 0, width, height);
             cr.clip();
-            cr.set_source_rgba(background[0], background[1], background[2], background[3]);
-            cr.paint();
+            if (!background_painted) {
+                cr.set_source_rgba(background[0], background[1], background[2], background[3]);
+                cr.paint();
+            }
             cr.set_line_join(Cairo.LineJoin.ROUND);
             cr.set_line_cap(Cairo.LineCap.ROUND);
             time = double.min(duration, double.max(0, time));
@@ -364,12 +409,13 @@ namespace pdfpc {
             cr.restore();
         }
 
-        public void draw_fitted(Cairo.Context cr, double time, double width, double height) {
+        public void draw_fitted(Cairo.Context cr, double time, double width, double height,
+            bool pixel_background = false) {
             double scale = double.min(width/this.width, height/this.height);
             cr.save();
             cr.translate((width - this.width*scale)/2, (height - this.height*scale)/2);
             cr.scale(scale, scale);
-            draw(cr, time);
+            draw(cr, time, pixel_background);
             cr.restore();
         }
     }

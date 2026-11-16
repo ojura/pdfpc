@@ -25,10 +25,10 @@ namespace pdfpc {
                 false, width, height, zoom_area);
             double box_width = area.x2 - area.x1;
             double box_height = area.y2 - area.y1;
-            cr.rectangle(area.x1, full_height - area.y2, box_width, box_height);
-            cr.clip();
             cr.translate(area.x1, full_height - area.y2);
-            scene.draw_fitted(cr, time, box_width, box_height);
+            // The fitted scene clips its paths. A second fractional region
+            // clip here would prevent its background replacing poster pixels.
+            scene.draw_fitted(cr, time, box_width, box_height, true);
             cr.restore();
         }
     }

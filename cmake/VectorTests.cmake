@@ -95,6 +95,12 @@ if(PYTHONINTERP_FOUND)
                     $<TARGET_FILE:vector-transition-probe>
                     --output ${CMAKE_BINARY_DIR}/tests/vector/transitions)
             set_tests_properties(vector-transitions PROPERTIES TIMEOUT 120)
+            add_test(NAME vector-region-edges
+                COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_region_edges.py
+                    --transform-probe $<TARGET_FILE:vector-transform-probe>
+                    --window-probe $<TARGET_FILE:vector-transition-probe>
+                    --output ${CMAKE_BINARY_DIR}/tests/vector/region-edges)
+            set_tests_properties(vector-region-edges PROPERTIES TIMEOUT 90)
             add_test(NAME vector-controller
                 COMMAND ${PYTHON_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tests/vector/test_controller.py
                     $<TARGET_FILE:vector-controller-probe>

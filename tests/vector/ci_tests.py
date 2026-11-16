@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 
 REQUIRED = {
     "vector-renderer", "vector-example", "vector-transform", "vector-controller",
-    "vector-transitions", "vector-trace-writer", "vector-trace-metrics",
+    "vector-transitions", "vector-region-edges", "vector-trace-writer", "vector-trace-metrics",
     "vector-resources-native", "vector-resources-windows", "vector-gui",
     "vector-gui-future-clock", "vector-gui-session",
 }

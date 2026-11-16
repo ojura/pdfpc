@@ -27,6 +27,17 @@ void capture(pdfpc.View.Pdf view, string prefix, string name) throws GLib.Error 
     image.save(prefix + "-" + name + ".png", "png");
 }
 
+void capture_region(pdfpc.View.Pdf view, string prefix, string phase) throws GLib.Error {
+    capture(view, prefix, phase + "-window");
+    var snapshot = view.snapshot();
+    require(snapshot != null, "The displayed animation must have a composed snapshot");
+    var poster = view.get_metadata().renderer.render(0, false,
+        snapshot.get_width(), snapshot.get_height());
+    require(snapshot.write_to_png(prefix + "-" + phase + "-snapshot.png") == Cairo.Status.SUCCESS &&
+        poster.write_to_png(prefix + "-" + phase + "-poster.png") == Cairo.Status.SUCCESS,
+        "Region comparison images must be writable");
+}
+
 // Observe the first real GTK frame after navigation rather than drawing the
 // widget again or comparing two copies made by the production snapshot helper.
 class FirstPaint : Object {
@@ -117,7 +128,14 @@ int main(string[] args) {
         print("START %d %" + int64.FORMAT + "\n", animation.page, GLib.get_monotonic_time());
     });
     try {
-        if (args[2] == "presenter-only") {
+        if (args[2] == "region-edge") {
+            animation.seek(0);
+            pump(100);
+            capture_region(view, args[3], "initial");
+            audience.resize(642, 482);
+            pump(150);
+            capture_region(view, args[3], "resized");
+        } else if (args[2] == "presenter-only") {
             require(controller.presentation == null, "This case must have no audience window");
             controller.switch_to_slide_number(1);
             pump(100);
