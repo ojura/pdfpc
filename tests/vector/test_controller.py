@@ -222,7 +222,7 @@ class ControllerTests(unittest.TestCase):
         report, errors = self.inspect_trace("trace-normal", destination)
         self.assertTrue(report["initial_enabled"])
         self.assertTrue(report["after_play_enabled"])
-        self.assertEqual(errors, "")
+        self.assertEqual(errors, "", errors)
         records = [json.loads(line) for line in destination.read_text().splitlines()]
         self.assertTrue(any(record["event"] == "frame" for record in records))
         self.assertTrue(any(record["event"] == "timing" for record in records))
@@ -235,7 +235,7 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(report["initial_enabled"])
         self.assertFalse(report["after_play_enabled"])
         self.assertEqual(report["diagnostic_cpu_us"], -1)
-        self.assertEqual(errors, "")
+        self.assertEqual(errors, "", errors)
 
     def test_stopped_collector_does_not_retain_playback(self):
         destination = OUTPUT / "released-playback.jsonl"
@@ -246,7 +246,7 @@ class ControllerTests(unittest.TestCase):
             result = session.run([PROBE, str(self.untimed), "trace-release"])
         (OUTPUT / "trace-release.log").write_text(result.stdout + result.stderr, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stderr, "", result.stderr)
         self.assertIn("PASS trace-release", result.stdout)
         records = [json.loads(line) for line in destination.read_text().splitlines()]
         self.assertEqual(records[-1]["event"], "frame")
